@@ -1,0 +1,12 @@
+name = "diario-alimentar"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./public"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "diario-alimentar"
+database_id = "71077e5c-b54a-443e-888a-08220988e06c"
