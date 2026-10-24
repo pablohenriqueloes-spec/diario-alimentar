@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261024232207"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261024233023"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -779,9 +779,9 @@ function viewMeal(id) {
     else if (e.target.dataset.qty != null) {
       const it = m.items[e.target.dataset.qty];
       const q = parseNum(e.target.value);
-      if (!q && get(it.foodId)?.mode === "unit") { toast("Informe quantas unidades"); render(); return; }
-      it.qty = q || null; saveMeal(m);
-      e.target.value = q ? fmtNum(q) : "";
+      const unit = get(it.foodId)?.mode === "unit";
+      it.qty = q || (unit ? 1 : null); saveMeal(m); // por unidade, em branco vale 1
+      e.target.value = it.qty ? fmtNum(it.qty) : "";
       drawTotal(m);
     }
   };
@@ -837,6 +837,9 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("scroll", fitSheet);
 }
 
+// "massinha de creme e café com leite" ou "arroz, feijão" viram um alimento por pedaço.
+const parts = (text) => text.split(/\s*,\s*|\s+e\s+/i).map((x) => x.trim()).filter(Boolean);
+
 // Digita o nome, escolhe um cadastrado ou segue com um novo; o cadastro acontece ao salvar.
 function openFoodSheet(onPick) {
   const usage = foodUsage();
@@ -848,29 +851,40 @@ function openFoodSheet(onPick) {
     <input type="text" id="fs-food" name="food-search-${uid()}" placeholder="Nome do alimento" autocomplete="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" enterkeyhint="next">
     <div class="food-list" id="fs-list"></div>
     <div id="fs-new" hidden>
-      <span class="muted small">Alimento novo, será cadastrado ao salvar. Como você mede?</span>
+      <span class="muted small" id="fs-new-label">Alimento novo, será cadastrado ao salvar. Como você mede?</span>
       <div class="chips"><button class="chip" data-mode="unit">Por unidade</button><button class="chip on" data-mode="weight">Por peso (g)</button></div>
       <label class="field" id="fs-uw-wrap" hidden>Peso médio de 1 unidade em gramas (opcional, para somar no total)
         <input type="text" inputmode="decimal" id="fs-uw" placeholder="Ex.: 50"></label>
     </div>
     <label class="field" id="fs-qty-wrap" hidden><span id="fs-qty-label"></span>
       <input type="text" inputmode="decimal" id="fs-qty" enterkeyhint="done"></label>
+    <div id="fs-multi" class="fs-multi" hidden></div>
     <p class="notice" id="fs-err" hidden></p>
     <button class="btn primary block" data-save>Salvar alimento</button>`);
   const $ = (sel) => s.querySelector(sel);
   const nameIn = $("#fs-food");
 
-  const match = () => { const t = norm(nameIn.value); return t ? foods.find((f) => norm(f.name) === t) : null; };
+  const find = (name) => { const t = norm(name); return t ? foods.find((f) => norm(f.name) === t) : null; };
+  const match = () => find(nameIn.value);
   const draw = () => {
-    const term = norm(nameIn.value);
-    const found = match();
-    const hits = found ? [] : foods.filter((f) => norm(f.name).includes(term)).slice(0, term ? 6 : 8);
+    const list = parts(nameIn.value), multi = list.length > 1;
+    // Com vários alimentos, a busca ajuda a completar o último que está sendo digitado.
+    const last = /(,|\s+e)\s*$/i.test(nameIn.value) ? "" : list[list.length - 1] || "";
+    const term = norm(multi ? last : nameIn.value);
+    const found = multi ? find(last) : match();
+    const hits = found || (multi && !term) ? [] : foods.filter((f) => norm(f.name).includes(term)).slice(0, term ? 6 : 8);
     $("#fs-list").innerHTML = hits.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${esc(f.name)}</span><span class="muted small">${f.mode === "unit" ? "por unidade" : "por peso"}</span></button>`).join("");
-    const mode = found ? found.mode : newMode;
-    $("#fs-new").hidden = !term || !!found;
-    $("#fs-uw-wrap").hidden = mode !== "unit";
-    $("#fs-qty-wrap").hidden = !term;
-    $("#fs-qty-label").textContent = mode === "unit" ? "Quantas unidades?" : "Peso em gramas (opcional)";
+    const newOnes = list.filter((n) => !find(n));
+    $("#fs-multi").hidden = !multi;
+    $("#fs-new-label").textContent = multi ? "Os alimentos novos serão cadastrados ao salvar. Como você mede?" : "Alimento novo, será cadastrado ao salvar. Como você mede?";
+    $("#fs-multi").innerHTML = multi ? `<span class="muted small">Vão entrar ${list.length} alimentos:</span>
+      ${list.map((n) => `<span class="fs-part">${esc(n)} <span class="pill">${find(n) ? "cadastrado" : "novo"}</span></span>`).join("")}
+      <span class="muted small">Quem é por unidade entra com 1; o peso fica em branco e pode ser editado na refeição.</span>` : "";
+    const mode = found && !multi ? found.mode : newMode;
+    $("#fs-new").hidden = multi ? !newOnes.length : !term || !!found;
+    $("#fs-uw-wrap").hidden = mode !== "unit" || multi;
+    $("#fs-qty-wrap").hidden = !term || multi;
+    $("#fs-qty-label").textContent = mode === "unit" ? "Quantas unidades? (em branco = 1)" : "Peso em gramas (opcional)";
     $("#fs-qty").placeholder = mode === "unit" ? "Ex.: 2" : "Ex.: 120";
     $("#fs-err").hidden = true;
   };
@@ -881,12 +895,33 @@ function openFoodSheet(onPick) {
   setTimeout(() => nameIn.focus(), 50);
 
   const fail = (msg) => { $("#fs-err").textContent = msg; $("#fs-err").hidden = false; };
+  // Um ou mais alimentos novos: cada um passa pela janela de tipo, um de cada vez.
+  function addNew(names, data, qtyFor, done) {
+    if (!names.length) return done();
+    const [name, ...rest] = names;
+    groupsSheet(name, (extra) => {
+      const id = "food:" + uid();
+      put("food", id, { ...data, name, ...extra });
+      foods.push(get(id));
+      onPick(id, qtyFor(data.mode));
+      rateFoods([get(id)]);
+      addNew(rest, data, qtyFor, done);
+    });
+  }
+
   function save() {
     const name = nameIn.value.trim();
     if (!name) return fail("Digite o nome do alimento.");
+    const list = parts(name);
+    if (list.length > 1) {
+      const qtyFor = (mode) => (mode === "unit" ? 1 : null);
+      const fresh = [];
+      closeSheet();
+      for (const n of list) { const f = find(n); if (f) onPick(f.id, qtyFor(f.mode)); else if (!fresh.some((x) => norm(x) === norm(n))) fresh.push(n); }
+      return addNew(fresh, { mode: newMode }, qtyFor, () => { closeSheet(); render(); });
+    }
     let f = match();
-    const qty = parseNum($("#fs-qty").value);
-    if ((f ? f.mode : newMode) === "unit" && !qty) return fail("Informe quantas unidades.");
+    const qty = parseNum($("#fs-qty").value) || ((f ? f.mode : newMode) === "unit" ? 1 : 0); // sem quantidade = 1 unidade
     if (f) { closeSheet(); return onPick(f.id, qty || null); }
     const data = { name, mode: newMode };
     const uw = parseNum($("#fs-uw").value);
@@ -910,7 +945,15 @@ function openFoodSheet(onPick) {
       draw(); $("#fs-qty").focus(); return;
     }
     const opt = e.target.closest(".food-opt");
-    if (opt) { nameIn.value = get(opt.dataset.id).name; draw(); $("#fs-qty").focus(); }
+    if (opt) {
+      const picked = get(opt.dataset.id).name;
+      if (parts(nameIn.value).length > 1) {
+        const prefix = nameIn.value.match(/^(.*(?:,|\s+e\s))/i)?.[1] || "";
+        nameIn.value = prefix.trimEnd() + " " + picked;
+        draw(); nameIn.focus(); return;
+      }
+      nameIn.value = picked; draw(); $("#fs-qty").focus();
+    }
   };
 }
 

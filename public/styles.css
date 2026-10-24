@@ -401,3 +401,7 @@ details.rank-row[open] summary .rank-name::after { transform: rotate(90deg); }
   :root:not([data-theme="light"]) .ok { --tone: #d9b44a; }
   :root:not([data-theme="light"]) .meh { --tone: #e0905a; }
 }
+
+/* Vários alimentos de uma vez ("arroz e feijão") */
+.fs-multi { display: flex; flex-direction: column; gap: 6px; }
+.fs-part { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
