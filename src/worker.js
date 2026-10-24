@@ -78,10 +78,10 @@ const GROUPS = {
 const MODEL = "@cf/openai/gpt-oss-120b";
 
 // Texto da resposta do modelo, qualquer que seja o formato de saída dele.
-async function askModel(env, prompt) {
+async function askModel(env, prompt, effort = "low") {
   const model = MODEL;
   const res = model.includes("gpt-oss")
-    ? await env.AI.run(model, { input: prompt, reasoning: { effort: "low" } })
+    ? await env.AI.run(model, { input: prompt, reasoning: { effort } })
     : await env.AI.run(model, { messages: [{ role: "user", content: prompt }], max_tokens: 2048, temperature: 0 });
   if (typeof res?.response === "string") return res.response;
   if (res?.response && typeof res.response === "object") return JSON.stringify(res.response);
@@ -140,6 +140,16 @@ const HEALTH_LEVELS = {
   evitar: "ultraprocessado, frito, muito doce ou alcoólico (refrigerante, salgadinho, biscoito, embutidos, frituras, doces, sorvete, salgados de padaria, bebidas alcoólicas)",
 };
 
+// Aceita "Saudável", "moderação", ["evitar"] etc. e devolve a chave da nota.
+function toLevel(v) {
+  const t = norm(Array.isArray(v) ? v[0] : typeof v === "object" && v ? Object.values(v)[0] : v);
+  if (t.startsWith("saud")) return "saudavel";
+  if (t.startsWith("moder")) return "moderado";
+  if (t.startsWith("evit")) return "evitar";
+  return null;
+}
+const parseJson = (text) => { try { return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { return {}; } };
+
 // Mesma ideia dos grupos: tabela de referência primeiro, IA para o resto.
 async function classifyHealth(env, foods, examples = []) {
   const out = {}, source = {}, ask = [];
@@ -158,12 +168,19 @@ async function classifyHealth(env, foods, examples = []) {
         : "") +
       "\n\nResponda somente com um objeto JSON, sem texto antes ou depois, no formato {\"nome do alimento\": \"nota\"}, " +
       "usando como chave exatamente o nome do alimento (sem o preparo).\n\nAlimentos:\n" + chunk.map((f) => `- ${describe(f)}`).join("\n");
-    const text = await askModel(env, prompt);
-    let parsed = {};
-    try { parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {}
-    for (const f of chunk) {
-      const got = parsed[f.name] ?? Object.entries(parsed).find(([k]) => norm(k) === norm(f.name))?.[1];
-      if (got in HEALTH_LEVELS) { out[f.name] = got; source[f.name] = "ia"; }
+    // Uma segunda tentativa, com mais raciocínio, para o que a primeira não respondeu direito.
+    for (const effort of ["low", "medium"]) {
+      const todo = chunk.filter((f) => !out[f.name]);
+      if (!todo.length) break;
+      const parsed = parseJson(await askModel(env, prompt, effort));
+      const entries = Object.entries(parsed);
+      for (const f of todo) {
+        let got = parsed[f.name] ?? entries.find(([k]) => norm(k) === norm(f.name))?.[1]
+          ?? entries.find(([k]) => norm(k).includes(norm(f.name)) || norm(f.name).includes(norm(k)))?.[1];
+        if (got == null && todo.length === 1 && entries.length === 1) got = entries[0][1];
+        const level = toLevel(got);
+        if (level) { out[f.name] = level; source[f.name] = "ia"; }
+      }
     }
   }
   return { health: out, source };

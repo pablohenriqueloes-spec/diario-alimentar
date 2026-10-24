@@ -1,5 +1,5 @@
 // Guarda as telas do app para abrir sem internet. Os dados ficam no aparelho (localStorage).
-const CACHE = "diario-20261024231430";
+const CACHE = "diario-20261024232207";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
