@@ -346,6 +346,8 @@ details.rank-row[open] summary .rank-name::after { transform: rotate(90deg); }
 .report-item { padding: 6px 0; border-bottom: 1px solid var(--line); break-inside: avoid; }
 .report-item:last-child { border-bottom: 0; }
 .sg-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+/* O cabeçalho fixo da janela não pode ficar por cima do campo em foco. */
+.sheet { scroll-padding-top: 76px; }
 .sheet .sheet-head { position: sticky; top: -16px; background: var(--bg); padding: 8px 0; margin-top: -8px; z-index: 1; }
 
 /* Lembretes de notificação: carrossel de horário, dias da semana e apagar */

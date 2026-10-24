@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261023230823"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261024231430"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -825,6 +825,18 @@ function closeSheet() {
 }
 document.getElementById("sheet-backdrop").addEventListener("click", closeSheet);
 
+// Teclado do celular: a janela de baixo sobe junto e fica acima dele, sem cobrir o que se digita.
+if (window.visualViewport) {
+  const fitSheet = () => {
+    const vv = window.visualViewport, sheet = document.getElementById("sheet");
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    sheet.style.bottom = kb > 80 ? kb + "px" : "";
+    sheet.style.maxHeight = kb > 80 ? Math.round(vv.height * 0.92) + "px" : "";
+  };
+  window.visualViewport.addEventListener("resize", fitSheet);
+  window.visualViewport.addEventListener("scroll", fitSheet);
+}
+
 // Digita o nome, escolhe um cadastrado ou segue com um novo; o cadastro acontece ao salvar.
 function openFoodSheet(onPick) {
   const usage = foodUsage();
@@ -833,7 +845,7 @@ function openFoodSheet(onPick) {
 
   const s = openSheet(`
     <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>Alimento</h2><button class="btn small primary" data-save>Salvar</button></div>
-    <input type="search" id="fs-name" placeholder="Nome do alimento" autocomplete="off" enterkeyhint="next">
+    <input type="text" id="fs-food" name="food-search-${uid()}" placeholder="Nome do alimento" autocomplete="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" enterkeyhint="next">
     <div class="food-list" id="fs-list"></div>
     <div id="fs-new" hidden>
       <span class="muted small">Alimento novo, será cadastrado ao salvar. Como você mede?</span>
@@ -846,7 +858,7 @@ function openFoodSheet(onPick) {
     <p class="notice" id="fs-err" hidden></p>
     <button class="btn primary block" data-save>Salvar alimento</button>`);
   const $ = (sel) => s.querySelector(sel);
-  const nameIn = $("#fs-name");
+  const nameIn = $("#fs-food");
 
   const match = () => { const t = norm(nameIn.value); return t ? foods.find((f) => norm(f.name) === t) : null; };
   const draw = () => {
@@ -1085,7 +1097,7 @@ function editFood(food, uses) {
   let mode = food?.mode || "weight";
   const s = openSheet(`
     <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>${food ? "Editar alimento" : "Novo alimento"}</h2><button class="btn small primary" data-save>Salvar</button></div>
-    <label class="field">Nome<input type="text" id="ef-name" value="${esc(food?.name)}"></label>
+    <label class="field">Nome<input type="text" id="ef-food" name="food-name-x" autocomplete="off" value="${esc(food?.name)}"></label>
     <div class="chips"><button class="chip ${mode === "unit" ? "on" : ""}" data-mode="unit">Por unidade</button><button class="chip ${mode === "weight" ? "on" : ""}" data-mode="weight">Por peso (g)</button></div>
     <label class="field" id="ef-uw-wrap" ${mode === "unit" ? "" : "hidden"}>Peso médio de 1 unidade em gramas (opcional)
       <input type="text" inputmode="decimal" id="ef-uw" value="${food?.unitWeight ? fmtNum(food.unitWeight) : ""}"></label>
@@ -1108,7 +1120,7 @@ function editFood(food, uses) {
     if (hb) return s.querySelectorAll("[data-health]").forEach((b) => b.classList.toggle("on", b === hb && !b.classList.contains("on")));
     const auto = e.target.closest("[data-auto]");
     if (auto) {
-      suggested = (await autoGroups(auto, s, s.querySelector("#ef-name").value.trim(), s.querySelector("#prep").value.trim())) || suggested;
+      suggested = (await autoGroups(auto, s, s.querySelector("#ef-food").value.trim(), s.querySelector("#prep").value.trim())) || suggested;
       return;
     }
     const err = s.querySelector("#ef-err");
@@ -1120,7 +1132,7 @@ function editFood(food, uses) {
       return;
     }
     if (e.target.closest("[data-save]")) {
-      const name = s.querySelector("#ef-name").value.trim();
+      const name = s.querySelector("#ef-food").value.trim();
       if (!name) { err.textContent = "Digite o nome."; err.hidden = false; return; }
       const groups = readGroups(s);
       const data = { name, mode, groups, prep: s.querySelector("#prep").value.trim(), groupsManual: manualFlag(groups, suggested, food) };
@@ -1807,20 +1819,24 @@ async function exportData() {
 
 /* ---------- Roteador ---------- */
 
+// Só volta ao topo ao trocar de tela; redesenhar a mesma tela (marcar uma opção, salvar) mantém a rolagem.
+let lastHash = null;
 function render() {
   closeSheet();
   if (!password) return viewLogin();
   const [, route, arg] = (location.hash.replace(/^#/, "") || "/").split("/");
-  window.scrollTo(0, 0);
+  const sameScreen = location.hash === lastHash, y = window.scrollY;
+  lastHash = location.hash;
   switch (route) {
-    case "dia": return /^\d{4}-\d{2}-\d{2}$/.test(arg) ? viewDay(arg) : viewCalendar();
-    case "refeicao": return viewMeal(decodeURIComponent(arg || ""));
-    case "analise": return viewAnalysis();
-    case "relatorio": return viewReport();
-    case "alimentos": return viewFoods();
-    case "ajustes": return viewSettings();
-    default: return viewCalendar();
+    case "dia": /^\d{4}-\d{2}-\d{2}$/.test(arg) ? viewDay(arg) : viewCalendar(); break;
+    case "refeicao": viewMeal(decodeURIComponent(arg || "")); break;
+    case "analise": viewAnalysis(); break;
+    case "relatorio": viewReport(); break;
+    case "alimentos": viewFoods(); break;
+    case "ajustes": viewSettings(); break;
+    default: viewCalendar();
   }
+  window.scrollTo(0, sameScreen ? y : 0);
 }
 
 // Calendário: navegação de mês e abrir dia (os demais cliques são de cada tela).
