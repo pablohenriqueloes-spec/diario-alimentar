@@ -374,14 +374,14 @@ details.rank-row[open] summary .rank-name::after { transform: rotate(90deg); }
 .wk-meals { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 /* Pontuação: Hoje, Semana e Mês abaixo do calendário */
-.sc-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sc-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .sc-tile {
   --tone: var(--muted);
   background: var(--surface-2); border-radius: 12px; padding: 10px 6px 8px;
   display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0;
 }
-.sc-emoji { font-size: 30px; line-height: 1.1; }
-.sc-num { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 700; color: var(--tone); }
+.sc-emoji { font-size: 26px; line-height: 1.1; }
+.sc-num { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; color: var(--tone); }
 .sc-label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .sc-bar { width: 80%; height: 5px; border-radius: 99px; background: var(--line); overflow: hidden; margin-top: 4px; }
 .sc-bar i { display: block; height: 100%; background: var(--tone); border-radius: 99px; }

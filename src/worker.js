@@ -1,4 +1,4 @@
-import { lookup, healthLookup, norm } from "./foods.js";
+import { lookup, healthLookup, gutLookup, norm } from "./foods.js";
 import { randomMessage, sendPush, publicKeyOf } from "./push.js";
 
 // API do Diário alimentar. Os arquivos do app são servidos pelos assets;
@@ -194,23 +194,96 @@ async function suggestHealth(request, env) {
   return json(await classifyHealth(env, foods, examples));
 }
 
+/* Nota da barriga (intestino irritado): semáforo e motivos. */
+
+const GUT_LEVELS = {
+  ok: "tranquilo: costuma ser bem tolerado por quem tem síndrome do intestino irritado (pouco FODMAP, pouca gordura, sem cafeína, álcool, gás ou picante)",
+  atencao: "atenção: gatilho só em porção grande ou para algumas pessoas, ou gatilho mais fraco (cafeína, gordura moderada, fibra insolúvel)",
+  gatilho: "gatilho comum: muito FODMAP, fritura ou muita gordura, álcool, refrigerante, picante forte ou adoçantes polióis",
+};
+const WHY = {
+  frutanos: "trigo, centeio, cevada, cebola, alho, banana madura",
+  gos: "feijões, lentilha, grão-de-bico, castanha de caju",
+  lactose: "leite, iogurte, sorvete, queijos frescos, leite condensado",
+  frutose: "maçã, pera, manga, melancia, mel, sucos, xarope de milho",
+  poliois: "sorbitol e manitol: ameixa, pêssego, cogumelo, couve-flor, produtos sem açúcar",
+  gordura: "fritura ou muita gordura",
+  cafeina: "café, chá preto ou mate, refrigerante de cola, energético",
+  alcool: "bebida alcoólica",
+  gas: "refrigerante, água com gás, bebidas gaseificadas",
+  picante: "pimenta e molhos picantes",
+  insoluvel: "fibra insolúvel: farelo de trigo, integrais, cascas, folhas duras",
+  soluvel: "fibra solúvel que ajuda: aveia, chia, linhaça, psyllium",
+};
+const toGut = (v) => { const t = norm(v); return t.startsWith("ok") || t.startsWith("tranq") ? "ok" : t.startsWith("aten") ? "atencao" : t.startsWith("gat") ? "gatilho" : null; };
+
+async function classifyGut(env, foods, examples = []) {
+  const out = {}, source = {}, ask = [];
+  for (const f of foods) {
+    const ref = f.prep ? null : gutLookup(f.name);
+    if (ref) { out[f.name] = ref; source[f.name] = "tabela"; } else ask.push(f);
+  }
+  for (let i = 0; i < ask.length; i += 40) {
+    const chunk = ask.slice(i, i + 40);
+    const prompt =
+      "Você é nutricionista especialista em síndrome do intestino irritado e segue a Monash University (dieta low FODMAP) e as diretrizes do ACG e do NICE. " +
+      "Para cada alimento abaixo, como costuma ser consumido no Brasil em porção normal, dê uma nota e os motivos.\nNotas:\n" +
+      Object.entries(GUT_LEVELS).map(([k, d]) => `- ${k}: ${d}`).join("\n") +
+      "\nMotivos possíveis (até 3, só os que se aplicam; pode ser nenhum):\n" + Object.entries(WHY).map(([k, d]) => `- ${k}: ${d}`).join("\n") +
+      (examples.length ? "\n\nNotas já confirmadas por quem usa o app. Siga o mesmo critério:\n" + examples.map((e) => `- ${describe(e)}: ${e.gut} (${e.why.join(", ") || "sem motivo"})`).join("\n") : "") +
+      "\n\nResponda somente com um objeto JSON, sem texto antes ou depois, no formato {\"nome do alimento\": {\"nota\": \"ok|atencao|gatilho\", \"motivos\": [\"...\"]}}, " +
+      "usando como chave exatamente o nome do alimento (sem o preparo).\n\nAlimentos:\n" + chunk.map((f) => `- ${describe(f)}`).join("\n");
+    for (const effort of ["low", "medium"]) {
+      const todo = chunk.filter((f) => !out[f.name]);
+      if (!todo.length) break;
+      const parsed = parseJson(await askModel(env, prompt, effort));
+      const entries = Object.entries(parsed);
+      for (const f of todo) {
+        let got = parsed[f.name] ?? entries.find(([k]) => norm(k) === norm(f.name))?.[1]
+          ?? entries.find(([k]) => norm(k).includes(norm(f.name)) || norm(f.name).includes(norm(k)))?.[1];
+        if (got == null && todo.length === 1 && entries.length === 1) got = entries[0][1];
+        const gut = toGut(got?.nota ?? got?.gut ?? got);
+        if (!gut) continue;
+        const why = (Array.isArray(got?.motivos) ? got.motivos : []).map((w) => norm(w)).filter((w) => w in WHY).slice(0, 3);
+        out[f.name] = { gut, why }; source[f.name] = "ia";
+      }
+    }
+  }
+  return { gut: out, source };
+}
+
+async function suggestGut(request, env) {
+  const body = await request.json().catch(() => null);
+  const foods = (Array.isArray(body?.foods) ? body.foods : []).map(item).filter((f) => f.name.trim()).slice(0, 200);
+  const examples = (Array.isArray(body?.examples) ? body.examples : []).slice(0, 40)
+    .map((e) => ({ ...item(e), gut: e?.gut, why: Array.isArray(e?.why) ? e.why.filter((w) => w in WHY) : [] }))
+    .filter((e) => e.gut in GUT_LEVELS);
+  return json(await classifyGut(env, foods, examples));
+}
+
 // Agendamento semanal: dá nota aos alimentos cadastrados que ainda não têm.
 // Grava como uma mudança comum, então o celular recebe na próxima sincronização.
 async function classifyPending(env) {
   const { results } = await env.DB.prepare("SELECT id, data, updated_at FROM records WHERE kind = 'food' AND deleted = 0").all();
   const foods = results.map((r) => ({ id: r.id, updated_at: r.updated_at, data: JSON.parse(r.data) }));
-  const pending = foods.filter((f) => !f.data.health && f.data.name);
+  const pending = foods.filter((f) => f.data.name && (!f.data.health || !f.data.gut));
   if (!pending.length) return 0;
+  const noHealth = pending.filter((f) => !f.data.health), noGut = pending.filter((f) => !f.data.gut);
   const examples = foods.filter((f) => f.data.health && f.data.healthManual).slice(-40)
     .map((f) => ({ name: f.data.name, prep: f.data.prep || "", health: f.data.health }));
-  const { health, source } = await classifyHealth(env, pending.map((f) => item(f.data)), examples);
+  const gutExamples = foods.filter((f) => f.data.gut && f.data.gutManual).slice(-40)
+    .map((f) => ({ name: f.data.name, prep: f.data.prep || "", gut: f.data.gut, why: f.data.gutWhy || [] }));
+  const { health, source } = noHealth.length ? await classifyHealth(env, noHealth.map((f) => item(f.data)), examples) : { health: {}, source: {} };
+  const { gut, source: gutSource } = noGut.length ? await classifyGut(env, noGut.map((f) => item(f.data)), gutExamples) : { gut: {}, source: {} };
   const last = await env.DB.prepare("SELECT MAX(rev) AS m FROM records").first();
   let rev = Math.max(Date.now(), (last?.m || 0) + 1);
   const stmts = [];
   for (const f of pending) {
-    const h = health[f.data.name];
-    if (!h) continue;
-    const data = { ...f.data, health: h, healthSource: source[f.data.name] };
+    const h = !f.data.health && health[f.data.name], g = !f.data.gut && gut[f.data.name];
+    if (!h && !g) continue;
+    const data = { ...f.data };
+    if (h) Object.assign(data, { health: h, healthSource: source[f.data.name] });
+    if (g) Object.assign(data, { gut: g.gut, gutWhy: g.why, gutSource: gutSource[f.data.name] });
     // Só grava se ninguém mexeu no alimento enquanto a IA respondia.
     stmts.push(env.DB.prepare("UPDATE records SET data = ?1, updated_at = ?2, rev = ?3 WHERE id = ?4 AND updated_at = ?5")
       .bind(JSON.stringify(data), Math.max(Date.now(), f.updated_at + 1), rev++, f.id, f.updated_at));
@@ -277,6 +350,10 @@ export default {
     if (url.pathname === "/api/ping" && request.method === "GET") return json({ ok: true });
     if (url.pathname === "/api/sync" && request.method === "POST") return sync(request, env);
     if (url.pathname.startsWith("/api/push/")) return push(request, env, url.pathname);
+    if (url.pathname === "/api/gut" && request.method === "POST") {
+      try { return await suggestGut(request, env); }
+      catch { return json({ error: "Serviço de sugestão indisponível" }, 502); }
+    }
     if (url.pathname === "/api/health" && request.method === "POST") {
       try { return await suggestHealth(request, env); }
       catch { return json({ error: "Serviço de sugestão indisponível" }, 502); }

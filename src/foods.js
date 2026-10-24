@@ -220,3 +220,111 @@ export function healthLookup(name) {
   const singular = n.split(" ").map((w) => w.replace(/(oes|aes)$/, "ao").replace(/s$/, "")).join(" ");
   return HEALTH.get(singular) ?? null;
 }
+
+// Nota da barriga (intestino irritado), pela Monash University e pelas diretrizes ACG, NICE e Alberta Health:
+// O = tranquilo, A = atenção (depende da porção ou é um gatilho mais fraco), G = gatilho comum.
+// Motivos: Fr frutanos, Go GOS, La lactose, Fu frutose, Po polióis, Gd gordura/fritura, Ca cafeína,
+// Al álcool, Gs gás, Pi picante, In fibra insolúvel, So fibra solúvel (ajuda).
+const GUT_LEVELS = { O: "ok", A: "atencao", G: "gatilho" };
+export const GUT_REASONS = {
+  Fr: "frutanos", Go: "gos", La: "lactose", Fu: "frutose", Po: "poliois", Gd: "gordura", Ca: "cafeina",
+  Al: "alcool", Gs: "gas", Pi: "picante", In: "insoluvel", So: "soluvel",
+};
+
+const GUT_TABLE = `
+arroz/arroz branco/tapioca/crepioca/cuscuz/cuscuz nordestino/cuscuz de milho/polenta/quinoa/mandioca/aipim/macaxeira/batata/batata cozida/inhame/cara/milho/pipoca|O
+arroz integral|O In
+aveia/farelo de aveia/chia/linhaca|O So
+ovo/ovo cozido/ovos/omelete/ovo mexido/frango/peito de frango/frango grelhado/frango assado/carne/carne moida/carne bovina/bife/patinho/alcatra/carne de porco/lombo/peixe/tilapia/merluza/salmao/sardinha/atum/camarao/peito de peru/tofu|O
+pure de batata/pure|A La
+batata doce|A Po
+milho verde|A Po
+leite sem lactose/queijo/mussarela/queijo mussarela/queijo prato/parmesao/queijo parmesao/manteiga/iogurte grego|O
+queijo minas/queijo frescal/queijo branco/ricota/cottage/requeijao/cream cheese/creme de leite|A La
+leite/leite integral/leite desnatado/iogurte/iogurte natural/iogurte de frutas/iogurte com sabor/danone/sorvete/leite condensado/pudim/doce de leite/achocolatado/nescau/toddy|G La
+morango/laranja/mexerica/tangerina/bergamota/mamao/papaya/abacaxi/kiwi/maracuja/uva/melao/limao/acai|O
+banana|A Fr
+abacate|A Po Gd
+coco|A
+maca/pera/manga/melancia/mel|G Fu
+goiaba|A Fu
+pessego/ameixa/cereja/amora/caqui/figo/damasco|G Po
+uva passa/passas|G Fu Fr
+alface/rucula/espinafre/tomate/pepino/chuchu/pimentao/cenoura/abobrinha/abobora/vagem/berinjela/palmito/salada|O
+couve/agriao/quiabo/brocolis|A In
+repolho|A Po
+beterraba|A Fr
+couve flor/cogumelo/champignon|G Po
+aspargo|G Fu Fr
+cebola/alho|G Fr
+feijao/feijao preto/feijao carioca/feijao branco/lentilha/grao de bico/ervilha/soja/edamame|G Go
+feijoada|G Go Gd
+amendoim/pasta de amendoim/nozes|O
+castanha/castanha do para/amendoas|A Go
+castanha de caju/pistache|G Go Fr
+pao/pao frances/pao de sal/pao de forma/torrada/bisnaguinha/sanduiche/sanduiche natural/macarrao/espaguete/massa/macarronada/cuscuz marroquino/biscoito agua e sal/cream cracker|G Fr
+pao integral/macarrao integral|G Fr In
+pao de queijo|A Gd
+pao com manteiga/pao na chapa/misto quente|G Fr Gd
+croissant/bolo/biscoito/bolacha/bolo de chocolate/biscoito recheado/bolacha recheada/churros/pizza/lasanha|G Fr Gd
+miojo/macarrao instantaneo|G Fr Gd
+yakisoba|G Fr
+granola|G Fr Fu
+cereal matinal/sucrilhos/barra de cereal|A Fr
+farofa|A Gd
+farinha de mandioca|O
+batata frita/mandioca frita/aipim frito/polenta frita/ovo frito/frango frito/peixe frito/torresmo/bacon|G Gd
+frango empanado/nuggets/bife a milanesa/milanesa/coxinha/pastel/esfiha/esfirra/empada/kibe/quibe/salgadinho/batata chips|G Gd Fr
+linguica/salsicha/presunto/mortadela/salame/hamburguer|G Gd Fr
+cachorro quente|G Gd Fr
+picanha/costela/cupim/fraldinha/contrafile/bisteca|A Gd
+arroz carreteiro|A Gd
+strogonoff/estrogonofe|G La Gd Fr
+chocolate amargo|A Gd
+chocolate/chocolate ao leite/brigadeiro|G La Gd
+pacoca|A Gd
+pao de mel|G Fr
+geleia|A Fu
+acucar|O
+margarina/azeite/oleo|A Gd
+maionese|A Gd
+ketchup|G Fr Fu
+mostarda|O
+molho de tomate|A Fr
+pimenta/molho de pimenta/curry|G Pi
+cafe/cafe preto/expresso/cafezinho|A Ca
+cafe com leite/pingado/cappuccino|G Ca La
+cha preto/cha verde/chimarrao/mate/terere|A Ca
+refrigerante/guarana/refrigerante zero/coca zero|G Gs
+coca cola/coca/refrigerante de cola|G Gs Ca
+energetico|G Ca Gs
+suco de caixinha/suco industrializado/suco|G Fu
+suco natural/suco de laranja|A Fu
+agua de coco|A Po
+cerveja|G Al Gs Fr
+vinho/cachaca/vodka/whisky/caipirinha|G Al
+agua|O
+sushi/temaki|O
+canjica|A La
+sopa|A Fr
+caldo verde|A Fr Gd
+moqueca|A Gd Fr
+acaraje|G Gd Go Pi
+vatapa|G Gd Fr
+arroz doce|G La
+`;
+
+export const GUT = new Map();
+for (const line of GUT_TABLE.trim().split("\n")) {
+  const [names, codes] = line.split("|");
+  const [lvl, ...why] = codes.trim().split(/\s+/);
+  const value = { gut: GUT_LEVELS[lvl], why: why.map((c) => GUT_REASONS[c]) };
+  for (const n of names.split("/")) GUT.set(norm(n), value);
+}
+
+export function gutLookup(name) {
+  const n = norm(name);
+  if (GUT.has(n)) return GUT.get(n);
+  const singular = n.split(" ").map((w) => w.replace(/(oes|aes)$/, "ao").replace(/s$/, "")).join(" ");
+  return GUT.get(singular) ?? null;
+}
