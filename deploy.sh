@@ -20,6 +20,12 @@ if grep -q PREENCHER_NO_DEPLOY wrangler.toml; then
   sed -i "s/PREENCHER_NO_DEPLOY/$id/" wrangler.toml
 fi
 
+# Versão nova a cada publicação: o app compara com /version.json e recarrega sozinho.
+v=$(date -u +%Y%m%d%H%M%S)
+printf '{"version":"%s"}\n' "$v" > public/version.json
+sed -i "s/^const APP_VERSION = .*/const APP_VERSION = \"$v\"; \/\/ trocado pelo deploy.sh a cada publicação/" public/app.js
+sed -i "s/^const CACHE = .*/const CACHE = \"diario-$v\";/" public/sw.js
+
 npx wrangler d1 execute diario-alimentar --remote --file schema.sql
 npx wrangler deploy
 printf '%s' "$APP_PASSWORD" | npx wrangler secret put APP_PASSWORD

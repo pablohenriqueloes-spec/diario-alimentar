@@ -7,3 +7,8 @@ CREATE TABLE IF NOT EXISTS records (
   rev INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS records_rev ON records (rev);
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  sub TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);

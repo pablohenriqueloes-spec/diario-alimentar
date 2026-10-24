@@ -14,4 +14,10 @@ protegida pela senha `APP_PASSWORD` (segredo do Worker).
 Teste local: `printf 'APP_PASSWORD=teste123\n' > .dev.vars`,
 `npx wrangler d1 execute diario-alimentar --local --file schema.sql` e `npx wrangler dev`.
 
-Notificações ficaram para depois.
+Notificações: `src/push.js` (Web Push com WebCrypto) e o cron de 1 minuto em `wrangler.toml`.
+Os horários ficam no registro `reminders` (sincronizado); as inscrições, na tabela `push_subs`.
+
+Pontuação: cada alimento tem uma nota de saúde (`health`: saudavel, moderado ou evitar), pela tabela de
+`src/foods.js` (regra de ouro do Guia Alimentar) e IA para o resto, na rota `/api/health`. O cron semanal
+(segunda, 9h UTC) dá nota aos alimentos que ainda não têm.
+A chave VAPID fica no segredo `VAPID_JWK` do Worker (já gravado; trocar a chave obriga a reativar no iPhone).

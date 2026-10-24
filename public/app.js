@@ -1,5 +1,7 @@
 "use strict";
 
+const APP_VERSION = "20261023230823"; // trocado pelo deploy.sh a cada publicação
+
 /* ---------- Armazenamento local ---------- */
 
 const LS = {
@@ -75,7 +77,12 @@ async function sync() {
         changes: dirty.map(({ dirty, ...r }) => r),
       }),
     });
-    if (res.status === 401) { setSync("Senha recusada", true); return; }
+    if (res.status === 401) {
+      // Senha trocada no servidor: pede de novo, sem apagar o que está no aparelho.
+      password = ""; LS.del("da_pw"); setSync("");
+      render(); toast("A senha mudou. Digite a nova senha.");
+      return;
+    }
     if (!res.ok) throw new Error("HTTP " + res.status);
     const out = await res.json();
 
@@ -96,7 +103,7 @@ async function sync() {
     LS.set("da_cursor", cursor);
     const hh = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     setSync("Salvo na nuvem " + hh);
-    if (changed && !isTyping()) render();
+    if (changed && !isTyping() && Date.now() - wheelBusy > 1500 && document.getElementById("sheet").hidden) render();
   } catch {
     setSync("Sem conexão · salvo no aparelho", true);
   } finally {
@@ -142,6 +149,8 @@ const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toL
 
 const MEAL_NAMES = ["Café da manhã", "Lanche da manhã", "Almoço", "Lanche da tarde", "Jantar", "Ceia"];
 const SYMPTOM_TYPES = ["Dor abdominal", "Inchaço", "Gases", "Azia", "Náusea", "Diarreia", "Prisão de ventre", "Outro"];
+const INTENSITIES = [["leve", "Leve"], ["moderado", "Moderado"], ["forte", "Forte"]];
+const FOOD_GROUPS = ["Fritura", "Gordura", "Fibra", "FODMAP", "Lactose", "Glúten", "Açúcar", "Cafeína", "Álcool", "Picante", "Leguminosa", "Ultraprocessado"];
 
 function guessMealName(time) {
   const h = Number((time || "12:00").slice(0, 2));
@@ -177,11 +186,14 @@ function saveMeal(meal) {
   put("meal", id, data);
 }
 
+// Quantidade pode faltar em alimento por peso (peso é opcional).
+const qtyText = (it, f) => (it.qty ? `${fmtNum(it.qty)} ${unitLabel(f)}` : "");
+
 function mealTotals(meal) {
   let grams = 0, est = 0, units = 0;
   for (const it of meal.items || []) {
     const f = get(it.foodId);
-    if (!f) continue;
+    if (!f || !it.qty) continue;
     if (f.mode === "weight") grams += it.qty;
     else if (f.unitWeight) est += it.qty * f.unitWeight;
     else units += it.qty;
@@ -190,6 +202,7 @@ function mealTotals(meal) {
 }
 
 function totalText(meal) {
+  if (meal.totalWeight) return `${fmtNum(meal.totalWeight)} g`; // total digitado à mão
   const { grams, est, units } = mealTotals(meal);
   const parts = [];
   if (grams || est) parts.push(`${est ? "≈ " : ""}${fmtNum(grams + est)} g`);
@@ -204,6 +217,111 @@ function foodUsage() {
 }
 
 const hasSymptoms = (day) => day.gi === "sim" || (day.symptoms || []).length > 0;
+
+/* ---------- Pontuação ---------- */
+
+// Nota de saúde de cada alimento, pela regra de ouro do Guia Alimentar (tabela + IA no servidor).
+const HEALTH = {
+  saudavel: { emoji: "🥦", label: "Saudável", pts: 100 },
+  moderado: { emoji: "🍞", label: "Moderação", pts: 60 },
+  evitar: { emoji: "🍟", label: "Evitar", pts: 15 },
+};
+const HEALTH_SOURCE = { tabela: "pela tabela do Guia Alimentar", ia: "pela IA", manual: "por você" };
+
+// Constância: registrar várias refeições no dia rende bônus.
+const mealBonus = (n) => (n >= 3 ? 10 : n === 2 ? 5 : 0);
+
+const LEVELS = [
+  [85, "🤩", "top", ["Nota 10! Tampinha arrasou 🥦", "Prato de campeã! 🏆", "Isso sim é comer bem! ✨"]],
+  [70, "😄", "good", ["Mandou bem! 💪", "Tá voando! 🚀", "Muito bom, continua assim! 🌱"]],
+  [55, "🙂", "ok", ["No caminho certo 👣", "Bom equilíbrio! ⚖️", "Dá pra subir mais um pouquinho 📈"]],
+  [40, "😐", "meh", ["Dá pra caprichar mais 🥕", "Que tal uma fruta no próximo lanche? 🍎", "Meio a meio hoje 🤷"]],
+  [0, "😬", "low", ["Ih... bora de salada no próximo? 🥗", "Dia de besteirinha, né? 🍟", "Amanhã é outro dia! 🌅"]],
+];
+const hashStr = (t) => [...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+function level(score, key = "") {
+  const [, emoji, tone, msgs] = LEVELS.find(([min]) => score >= min);
+  return { emoji, tone, msg: msgs[hashStr(key) % msgs.length] }; // a frase não muda a cada abertura
+}
+
+// Nota do dia (0 a 100): média das notas dos alimentos + bônus de constância.
+function dayScore(date) {
+  const meals = mealsOn(date);
+  if (!meals.length) return null;
+  const counts = { saudavel: 0, moderado: 0, evitar: 0 }, unrated = new Set();
+  let pts = 0, n = 0;
+  for (const m of meals) for (const it of m.items || []) {
+    const f = get(it.foodId);
+    if (!f) continue;
+    if (!HEALTH[f.health]) { unrated.add(f.id); continue; }
+    counts[f.health]++; pts += HEALTH[f.health].pts; n++;
+  }
+  const score = n ? Math.min(100, Math.round(pts / n + mealBonus(meals.length))) : null;
+  return { date, score, meals: meals.length, counts, unrated };
+}
+
+// Nota de um período: média dos dias com nota; dias registrados contam até hoje.
+function periodScore(start, end) {
+  const t = today(), days = [];
+  for (let s = start; s <= end && s <= t; s = addDays(s, 1)) days.push(dayScore(s));
+  const scored = days.filter((d) => d?.score != null);
+  const counts = { saudavel: 0, moderado: 0, evitar: 0 };
+  for (const d of scored) for (const k in counts) counts[k] += d.counts[k];
+  return {
+    score: scored.length ? Math.round(avg(scored.map((d) => d.score))) : null,
+    elapsed: days.length, logged: days.filter(Boolean).length, scored, counts,
+  };
+}
+
+// Dias seguidos com pelo menos uma refeição (hoje ainda vazio não quebra a sequência).
+function streak() {
+  let s = today(), n = 0;
+  if (!mealsOn(s).length) s = addDays(s, -1);
+  while (mealsOn(s).length) { n++; s = addDays(s, -1); }
+  return n;
+}
+
+function weekBadges(w) {
+  const out = [];
+  if (w.scored.filter((d) => d.score >= 70).length >= 5) out.push(["🥗", "Semana verde", "5 dias ou mais com nota acima de 70"]);
+  if (w.elapsed === 7 && w.logged === 7) out.push(["📒", "Diário em dia", "registrou todos os dias da semana"]);
+  if (w.scored.length >= 3 && !w.counts.evitar) out.push(["🚫🍟", "Sem besteira", "nenhum alimento para evitar na semana"]);
+  if (w.counts.saudavel >= 15) out.push(["🥦", "Fã de verdura", "15 ou mais alimentos saudáveis na semana"]);
+  return out;
+}
+function monthBadges(m) {
+  const out = [];
+  if (m.scored.length >= 15 && m.score >= 75) out.push(["🏆", "Mês campeão", "média acima de 75 em 15 dias ou mais"]);
+  if (m.logged >= 20) out.push(["🗓️", "Maratonista", "20 dias ou mais registrados no mês"]);
+  return out;
+}
+
+// Pede ao servidor a nota dos alimentos sem nota (o agendamento semanal faz o mesmo para o que sobrar).
+let rating = false;
+async function rateFoods(foods = all("food").filter((f) => !HEALTH[f.health])) {
+  if (!foods.length || rating || !password || !navigator.onLine) return 0;
+  rating = true;
+  try {
+    const examples = all("food").filter((f) => f.healthManual && HEALTH[f.health]).slice(-40)
+      .map((f) => ({ name: f.name, prep: f.prep || "", health: f.health }));
+    const res = await fetch("/api/health", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + password },
+      body: JSON.stringify({ foods: foods.map((f) => ({ name: f.name, prep: f.prep || "" })), examples }),
+    });
+    if (!res.ok) return 0;
+    const { health = {}, source = {} } = await res.json();
+    let n = 0;
+    for (const f0 of foods) {
+      const f = get(f0.id);
+      if (!f || HEALTH[f.health] || !HEALTH[health[f.name]]) continue;
+      const { id, ...data } = f;
+      put("food", id, { ...data, health: health[f.name], healthSource: source[f.name] || "ia" });
+      n++;
+    }
+    return n;
+  } catch { return 0; } finally { rating = false; }
+}
 
 /* ---------- Interface: utilidades ---------- */
 
@@ -232,9 +350,58 @@ const chips = (field, options, value, cls = "") =>
     .map(([v, label]) => `<button type="button" class="chip ${cls} ${value === v ? "on" : ""}" data-action="chip" data-field="${field}" data-value="${esc(v)}">${esc(label)}</button>`)
     .join("")}</div>`;
 
+/* ---------- Seletor de horário (carrossel de hora e minutos) ---------- */
+
+const WHEEL_ROW = 36; // altura de cada linha, igual ao CSS
+let wheelBusy = 0;    // último giro, para a sincronização não redesenhar a tela no meio
+
+const wheelCol = (part, count, value, label) => `
+  <div class="tw-part"><span class="tw-label">${label}</span>
+    <div class="tw-box"><div class="tw-col" data-part="${part}" data-value="${value}">
+      <div class="tw-pad"></div>${Array.from({ length: count }, (_, i) => `<div class="tw-row" data-i="${i}">${pad(i)}</div>`).join("")}<div class="tw-pad"></div>
+    </div></div></div>`;
+
+function timeWheel(key, time) {
+  const [h, m] = (time || "12:00").split(":").map(Number);
+  return `<div class="tw" data-tw="${esc(key)}">${wheelCol("h", 24, h, "Hora")}<span class="tw-sep">:</span>${wheelCol("m", 60, m, "Minutos")}</div>`;
+}
+
+// Liga os carrosséis dentro de `root`; onChange(key, "HH:MM") quando um giro termina.
+function initWheels(root, onChange) {
+  for (const tw of root.querySelectorAll(".tw")) {
+    const cols = [...tw.querySelectorAll(".tw-col")];
+    const mark = (col, i) => col.querySelectorAll(".tw-row").forEach((r) => r.classList.toggle("on", Number(r.dataset.i) === i));
+    const value = () => cols.map((c) => pad(c.dataset.value)).join(":");
+    for (const col of cols) {
+      const max = col.querySelectorAll(".tw-row").length - 1;
+      col.scrollTop = Number(col.dataset.value) * WHEEL_ROW;
+      mark(col, Number(col.dataset.value));
+      let t = null;
+      col.addEventListener("scroll", () => {
+        wheelBusy = Date.now();
+        const i = Math.max(0, Math.min(max, Math.round(col.scrollTop / WHEEL_ROW)));
+        mark(col, i);
+        clearTimeout(t);
+        t = setTimeout(() => {
+          if (Number(col.dataset.value) === i) return;
+          col.dataset.value = i;
+          onChange(tw.dataset.tw, value());
+        }, 150);
+      }, { passive: true });
+      col.addEventListener("click", (e) => {
+        const row = e.target.closest(".tw-row");
+        if (row) col.scrollTo({ top: Number(row.dataset.i) * WHEEL_ROW, behavior: "smooth" });
+      });
+    }
+  }
+}
+
 /* ---------- Telas ---------- */
 
 let calMonth = null; // [ano, mês]
+let calWeek = null;  // domingo da semana mostrada no modo Semana (aaaa-mm-dd)
+let calMode = LS.get("da_cal_mode", "mes"); // "semana" ou "mes"
+const weekStart = (s) => addDays(s, -parseYmd(s).getDay());
 
 function viewLogin() {
   setChrome({ title: "Diário alimentar", tabs: false });
@@ -261,6 +428,7 @@ function viewLogin() {
     location.hash = "#/";
     render();
     sync();
+    setTimeout(maybeAskNotifications, 1500);
   });
 }
 
@@ -276,20 +444,41 @@ function viewCalendar() {
   for (const meal of all("meal")) mealCount[meal.date] = (mealCount[meal.date] || 0) + 1;
   for (const d of all("day")) if (hasSymptoms(d)) alert[d.date] = true;
 
-  let cells = "";
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
-    const s = ymd(d);
-    if (i >= 35 && d.getMonth() !== m) break;
-    const n = Math.min(mealCount[s] || 0, 5);
-    const dots = Array.from({ length: n }, () => '<i class="dot"></i>').join("") + (alert[s] ? '<i class="dot alert"></i>' : "");
-    cells += `<button class="cal-day ${d.getMonth() !== m ? "out" : ""} ${s === t ? "today" : ""}" data-action="open-day" data-date="${s}" aria-label="${esc(fmtLong(s))}">
-      <span class="d">${d.getDate()}</span><span class="dots">${dots}</span></button>`;
-  }
+  const dotsFor = (s) => Array.from({ length: Math.min(mealCount[s] || 0, 5) }, () => '<i class="dot"></i>').join("") + (alert[s] ? '<i class="dot alert"></i>' : "");
 
-  const todayMeals = mealsOn(t);
-  $view.innerHTML = `
-    <div class="card">
+  let calHtml;
+  if (calMode === "semana") {
+    if (!calWeek) calWeek = weekStart(t);
+    const days = Array.from({ length: 7 }, (_, i) => addDays(calWeek, i));
+    const end = days[6], sp = parseYmd(calWeek), ep = parseYmd(end);
+    const title = sp.getMonth() === ep.getMonth()
+      ? `${sp.getDate()} a ${ep.getDate()} de ${new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(ep)}`
+      : `${fmtShort(calWeek)} a ${fmtShort(end)}`;
+    calHtml = `
+      <div class="cal-head">
+        <button class="btn small" data-action="week" data-delta="-7" aria-label="Semana anterior">‹</button>
+        <h2>${esc(title)}</h2>
+        <button class="btn small" data-action="week" data-delta="7" aria-label="Próxima semana">›</button>
+      </div>
+      <div class="wk-grid">${days.map((s) => {
+        const n = mealCount[s] || 0;
+        return `<button class="wk-day ${s === t ? "today" : ""}" data-action="open-day" data-date="${s}" aria-label="${esc(fmtLong(s))}">
+          <span class="wk-dow">${["D", "S", "T", "Q", "Q", "S", "S"][parseYmd(s).getDay()]}</span>
+          <span class="wk-n">${parseYmd(s).getDate()}</span>
+          <span class="dots">${dotsFor(s)}</span>
+          <span class="wk-meals">${n ? `${n} ref.` : ""}</span>
+          <span class="wk-score">${(() => { const d = dayScore(s); return d?.score != null ? level(d.score).emoji : ""; })()}</span></button>`;
+      }).join("")}</div>`;
+  } else {
+    let cells = "";
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      const s = ymd(d);
+      if (i >= 35 && d.getMonth() !== m) break;
+      cells += `<button class="cal-day ${d.getMonth() !== m ? "out" : ""} ${s === t ? "today" : ""}" data-action="open-day" data-date="${s}" aria-label="${esc(fmtLong(s))}">
+        <span class="d">${d.getDate()}</span><span class="dots">${dotsFor(s)}</span></button>`;
+    }
+    calHtml = `
       <div class="cal-head">
         <button class="btn small" data-action="month" data-delta="-1" aria-label="Mês anterior">‹</button>
         <h2>${esc(fmtMonth(y, m))}</h2>
@@ -298,18 +487,96 @@ function viewCalendar() {
       <div class="cal-grid">
         ${["D", "S", "T", "Q", "Q", "S", "S"].map((d) => `<div class="cal-dow">${d}</div>`).join("")}
         ${cells}
-      </div>
+      </div>`;
+  }
+
+  const todayMeals = mealsOn(t);
+  const ws = calMode === "semana" ? calWeek : weekStart(t);
+  const mStart = ymd(new Date(y, m, 1)), mEnd = ymd(new Date(y, m + 1, 0));
+  $view.innerHTML = `
+    <div class="seg" role="group" aria-label="Modo do calendário">
+      <button class="${calMode === "semana" ? "on" : ""}" data-action="cal-mode" data-mode="semana" aria-pressed="${calMode === "semana"}">SEMANA</button>
+      <button class="${calMode === "mes" ? "on" : ""}" data-action="cal-mode" data-mode="mes" aria-pressed="${calMode === "mes"}">MÊS</button>
+    </div>
+    <div class="card">
+      ${calHtml}
       <div class="legend"><span><i class="dot"></i>refeição</span><span><i class="dot alert"></i>sintoma</span></div>
     </div>
+    ${scoreCard(t, ws, mStart, mEnd)}
     <a class="card" href="#/dia/${t}" style="text-decoration:none;color:inherit">
       <div class="spread"><h2>Hoje</h2><span class="muted small">${esc(fmtLong(t))}</span></div>
       <span class="muted small">${todayMeals.length ? plural(todayMeals.length, "refeição registrada", "refeições registradas") : "Nenhuma refeição registrada ainda"} · toque para abrir</span>
     </a>`;
+  $view.onclick = (e) => {
+    if (e.target.closest("[data-action=score-help]")) return scoreHelp(ws);
+    const rate = e.target.closest("[data-action=rate-foods]");
+    if (rate) {
+      rate.disabled = true; rate.textContent = "Classificando…";
+      rateFoods().then((n) => { toast(n ? `${plural(n, "alimento ganhou nota", "alimentos ganharam nota")}` : "Não foi possível classificar agora"); render(); });
+    }
+  };
+}
+
+const monthShort = (s) => cap(new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(parseYmd(s)));
+
+function scoreTile(label, score, key) {
+  if (score == null) return `<div class="sc-tile"><span class="sc-emoji">🫥</span><span class="sc-num muted">--</span><span class="sc-label">${esc(label)}</span><span class="sc-bar"><i style="width:0"></i></span></div>`;
+  const lv = level(score, key);
+  return `<div class="sc-tile ${lv.tone}"><span class="sc-emoji">${lv.emoji}</span><span class="sc-num">${score}</span><span class="sc-label">${esc(label)}</span><span class="sc-bar"><i style="width:${score}%"></i></span></div>`;
+}
+
+function scoreCard(t, ws, mStart, mEnd) {
+  const d = dayScore(t), w = periodScore(ws, addDays(ws, 6)), mo = periodScore(mStart, mEnd);
+  if (!all("meal").length) return "";
+  const thisWeek = ws === weekStart(t);
+  // A frase vem do dia; se hoje ainda não tem nota, da semana.
+  const head = d?.score != null ? { s: d.score, key: t, who: "Hoje" } : w.score != null ? { s: w.score, key: ws, who: thisWeek ? "Nesta semana" : "Na semana" } : null;
+  const mix = (c) => `🥦 ${c.saudavel} · 🍞 ${c.moderado} · 🍟 ${c.evitar}`;
+  const st = streak();
+  const badges = [...weekBadges(w), ...monthBadges(mo)];
+  const unrated = all("food").filter((f) => !HEALTH[f.health]).length;
+  return `
+    <div class="card score">
+      <div class="spread"><h2>Pontuação</h2><button class="btn small" data-action="score-help">Como funciona?</button></div>
+      <div class="sc-tiles">
+        ${scoreTile("Hoje", d?.score, t)}
+        ${scoreTile(thisWeek ? "Semana" : `Sem. ${fmtShort(ws)}`, w.score, ws)}
+        ${scoreTile(monthShort(mStart), mo.score, mStart)}
+      </div>
+      ${head ? `<p class="sc-msg">${esc(head.who)}: ${esc(level(head.s, head.key).msg)}</p>` : `<p class="sc-msg muted">Registre as refeições de hoje para ganhar sua primeira nota 🍽️</p>`}
+      ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}${mealBonus(d.meals) ? ` · +${mealBonus(d.meals)} de constância` : ""}</span>` : ""}
+      ${st >= 2 ? `<span class="small sc-streak">🔥 ${st} dias seguidos registrando</span>` : ""}
+      ${badges.length ? `<div class="sc-badges">${badges.map(([e, name, why]) => `<span class="sc-badge" title="${esc(why)}">${e} ${esc(name)}</span>`).join("")}</div>` : ""}
+      ${unrated ? `<div class="spread"><span class="muted small">${plural(unrated, "alimento ainda sem nota", "alimentos ainda sem nota")} (classificados toda segunda)</span><button class="btn small" data-action="rate-foods">Classificar agora</button></div>` : ""}
+    </div>`;
+}
+
+function scoreHelp(ws) {
+  const w = periodScore(ws, addDays(ws, 6));
+  const eaten = {};
+  for (const d of w.scored) for (const m of mealsOn(d.date)) for (const it of m.items || []) {
+    const f = get(it.foodId);
+    if (f?.health === "evitar") eaten[f.name] = (eaten[f.name] || 0) + 1;
+  }
+  const top = Object.entries(eaten).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const s = openSheet(`
+    <div class="sheet-head"><span></span><h2>Como funciona</h2><button class="btn small primary" data-close>OK</button></div>
+    <p class="small" style="margin:0">Cada alimento tem uma nota, seguindo a regra de ouro do <b>Guia Alimentar para a População Brasileira</b>: comida de verdade como base, processados com moderação e ultraprocessados evitados.</p>
+    <div class="sc-rules">
+      ${Object.values(HEALTH).map((h) => `<span>${h.emoji} <b>${h.label}</b></span><span class="num">${h.pts} pts</span>`).join("")}
+      <span>🍽️ <b>Constância</b>: 2 refeições no dia</span><span class="num">+5</span>
+      <span>🍽️ <b>Constância</b>: 3 ou mais</span><span class="num">+10</span>
+    </div>
+    <p class="small" style="margin:0">A nota do dia é a média dos alimentos mais o bônus, até 100. A da semana e a do mês são a média dos dias com nota.</p>
+    <p class="small" style="margin:0">${LEVELS.map(([min, e]) => `${e} ${min}+`).join(" · ")}</p>
+    ${top.length ? `<span class="q-label">🍟 mais comidos nesta semana</span><span class="small">${top.map(([n, c]) => `${esc(n)} (${c}×)`).join(", ")}</span>` : ""}
+    <p class="muted small" style="margin:0">A nota de cada alimento pode ser trocada na aba Alimentos.</p>`);
+  s.onclick = (e) => { if (e.target.closest("[data-close]")) closeSheet(); };
 }
 
 function viewDay(date) {
   setChrome({ title: fmtTitle(date), back: "#/", tab: "cal" });
-  const d = parseYmd(date); calMonth = [d.getFullYear(), d.getMonth()];
+  const d = parseYmd(date); calMonth = [d.getFullYear(), d.getMonth()]; calWeek = weekStart(date);
   const meals = mealsOn(date);
   const day = getDay(date);
 
@@ -317,7 +584,7 @@ function viewDay(date) {
     ? meals.map((meal) => {
         const names = (meal.items || []).map((it) => {
           const f = get(it.foodId);
-          return `${esc(foodName(it.foodId))} ${fmtNum(it.qty)} ${unitLabel(f)}`;
+          return `${esc(foodName(it.foodId))} ${qtyText(it, f)}`.trim();
         }).join(" · ");
         return `<a class="meal" href="#/refeicao/${meal.id}">
           <span class="meal-time">${esc(meal.time || "--:--")}</span>
@@ -330,18 +597,23 @@ function viewDay(date) {
   const yn = [["sim", "Sim"], ["nao", "Não"]];
   const symptoms = (day.symptoms || []).map((s) => `
     <div class="symptom">
-      <input type="time" value="${esc(s.time)}" data-symptom="${s.id}" data-sfield="time" aria-label="Horário do sintoma">
+      ${s.time ? timeWheel("s:" + s.id, s.time) : `<button class="btn small" data-action="set-stime" data-id="${s.id}">Informar horário</button>`}
       <select data-symptom="${s.id}" data-sfield="type" aria-label="Tipo de sintoma">
         ${SYMPTOM_TYPES.map((t) => `<option ${t === s.type ? "selected" : ""}>${esc(t)}</option>`).join("")}
       </select>
       <button class="icon-btn" data-action="del-symptom" data-id="${s.id}" aria-label="Remover sintoma">×</button>
+      <div class="chips symptom-int"><span class="muted small">Intensidade</span>${INTENSITIES.map(([v, label]) =>
+        `<button type="button" class="chip alert ${s.intensity === v ? "on" : ""}" data-action="sint" data-id="${s.id}" data-value="${v}">${label}</button>`).join("")}</div>
     </div>`).join("");
 
+  const ds = dayScore(date);
   $view.innerHTML = `
     <div class="spread">
       <a class="btn small" href="#/dia/${addDays(date, -1)}">‹ ${esc(fmtShort(addDays(date, -1)))}</a>
       <a class="btn small" href="#/dia/${addDays(date, 1)}">${esc(fmtShort(addDays(date, 1)))} ›</a>
     </div>
+    ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
+      <span><b class="num">Nota do dia: ${ds.score}</b><br><span class="small">${esc(level(ds.score, date).msg)}<br>🥦 ${ds.counts.saudavel} · 🍞 ${ds.counts.moderado} · 🍟 ${ds.counts.evitar}</span></span></div>` : ""}
     <div class="card">
       <h2>Refeições</h2>
       ${mealHtml}
@@ -376,6 +648,11 @@ function viewDay(date) {
       </div>
     </div>`;
 
+  initWheels($view, (key, time) => {
+    const dd = getDay(date);
+    const s = dd.symptoms.find((x) => "s:" + x.id === key);
+    if (s) { s.time = time; saveDay(dd); }
+  });
   $view.oninput = (e) => {
     const note = e.target.dataset.note;
     if (note) {
@@ -400,6 +677,13 @@ function viewDay(date) {
       dd[f] = dd[f] === el.dataset.value ? null : el.dataset.value;
       if (f === "gi" && dd.gi === "sim" && !dd.symptoms.length) dd.symptoms.push({ id: uid(), time: date === today() ? nowHHMM() : "", type: SYMPTOM_TYPES[1] });
       saveDay(dd); render();
+    } else if (el.dataset.action === "sint") {
+      const s = dd.symptoms.find((x) => x.id === el.dataset.id);
+      if (s) { s.intensity = s.intensity === el.dataset.value ? null : el.dataset.value; saveDay(dd); }
+      el.parentElement.querySelectorAll("[data-action=sint]").forEach((b) => b.classList.toggle("on", b === el && !!s?.intensity));
+    } else if (el.dataset.action === "set-stime") {
+      const s = dd.symptoms.find((x) => x.id === el.dataset.id);
+      if (s) { s.time = "12:00"; saveDay(dd); render(); }
     } else if (el.dataset.action === "add-symptom") {
       dd.symptoms.push({ id: uid(), time: date === today() ? nowHHMM() : "", type: SYMPTOM_TYPES[1] });
       saveDay(dd); render();
@@ -424,7 +708,7 @@ function viewMeal(id) {
     const f = get(it.foodId);
     return `<div class="item">
       <span class="item-name">${esc(foodName(it.foodId))}${f?.mode === "unit" && f.unitWeight ? `<br><span class="muted small">${fmtNum(f.unitWeight)} g por unidade</span>` : ""}</span>
-      <span class="qty"><input type="text" inputmode="decimal" value="${fmtNum(it.qty)}" data-qty="${i}" aria-label="Quantidade"> <span class="muted">${unitLabel(f)}</span></span>
+      <span class="qty"><input type="text" inputmode="decimal" value="${it.qty ? fmtNum(it.qty) : ""}" placeholder="${f?.mode === "unit" ? "" : "opcional"}" data-qty="${i}" aria-label="Quantidade"> <span class="muted">${unitLabel(f)}</span></span>
       <button class="icon-btn" data-action="del-item" data-i="${i}" aria-label="Remover">×</button>
     </div>`;
   }).join("");
@@ -432,39 +716,73 @@ function viewMeal(id) {
   $view.innerHTML = `
     <div class="card">
       <label class="field">Refeição<input type="text" id="meal-name" value="${esc(meal.name)}"></label>
-      <div class="chips">${MEAL_NAMES.map((n) => `<button class="chip ${n === meal.name ? "on" : ""}" data-action="name" data-value="${esc(n)}">${esc(n)}</button>`).join("")}</div>
-      <label class="field">Horário em que aconteceu<input type="time" id="meal-time" value="${esc(meal.time)}"></label>
-      ${meal.time ? "" : `<p class="notice">Informe o horário para a refeição entrar na análise.</p>`}
+      <div class="chips" id="meal-chips">${MEAL_NAMES.map((n) => `<button class="chip ${n === meal.name ? "on" : ""}" data-action="name" data-value="${esc(n)}">${esc(n)}</button>`).join("")}</div>
+      <span class="muted small">Horário em que aconteceu</span>
+      ${meal.time ? timeWheel("meal", meal.time) : `<button class="btn" data-action="set-time">Informar horário</button>
+        <p class="notice">Informe o horário para a refeição entrar na análise.</p>`}
     </div>
     <div class="card">
       <h2>Alimentos</h2>
       ${items || `<p class="empty">Nenhum alimento ainda.</p>`}
-      <div class="total-bar"><span>Total da refeição</span><span class="num" id="meal-total">${esc(totalText(meal))}</span></div>
-      <button class="btn primary block" data-action="add-food">+ Adicionar alimento</button>
+      <div class="total-bar"><span>Total da refeição</span>
+        <span class="qty"><input type="text" inputmode="decimal" id="meal-total" aria-label="Peso total da refeição"> <span class="muted">g</span></span></div>
+      <span class="muted small" id="total-note"></span>
+      <button class="btn block" data-action="add-food">+ Adicionar alimento</button>
     </div>
+    <button class="btn primary block" data-action="save-meal">Salvar refeição</button>
     <button class="btn danger" data-action="del-meal">Excluir refeição</button>`;
 
   const reload = () => get(id);
+
+  // Total: soma dos alimentos, a menos que tenha sido digitado à mão (totalWeight).
+  const drawTotal = (m, keepInput = false) => {
+    const { grams, est, units } = mealTotals(m);
+    const sum = grams + est;
+    const input = document.getElementById("meal-total");
+    if (!keepInput) input.value = m.totalWeight ? fmtNum(m.totalWeight) : sum ? fmtNum(sum) : "";
+    input.placeholder = "0";
+    const extra = units ? ` + ${fmtNum(units)} un. sem peso` : "";
+    document.getElementById("total-note").textContent = m.totalWeight
+      ? `Editado à mão. Soma dos alimentos: ${fmtNum(sum)} g${extra}. Apague o campo para voltar à soma.`
+      : `${est ? "Estimado pela" : "Calculado pela"} soma dos alimentos${extra}. Pode editar.`;
+  };
+  drawTotal(meal);
+
+  initWheels($view, (key, time) => {
+    const m = reload();
+    m.time = time;
+    if (m.autoName) { // nome sugerido acompanha o horário até ser escolhido
+      m.name = guessMealName(time);
+      document.getElementById("meal-name").value = m.name;
+      document.querySelectorAll("#meal-chips .chip").forEach((c) => c.classList.toggle("on", c.dataset.value === m.name));
+      setChrome({ title: m.name, back: "#/dia/" + m.date, tab: "cal" });
+    }
+    saveMeal(m);
+  });
+
   $view.oninput = (e) => {
     if (e.target.dataset.qty != null) {
       const m = reload();
-      m.items[e.target.dataset.qty].qty = parseNum(e.target.value);
-      document.getElementById("meal-total").textContent = totalText(m);
+      m.items[e.target.dataset.qty].qty = parseNum(e.target.value) || null;
+      drawTotal(m);
     }
   };
   $view.onchange = (e) => {
     const m = reload();
     if (e.target.id === "meal-name") { m.name = e.target.value.trim(); m.autoName = false; saveMeal(m); setChrome({ title: m.name || "Refeição", back: "#/dia/" + m.date, tab: "cal" }); }
-    else if (e.target.id === "meal-time") {
-      m.time = e.target.value;
-      if (m.autoName && m.time) m.name = guessMealName(m.time); // nome sugerido acompanha o horário até ser escolhido
-      saveMeal(m); render();
+    else if (e.target.id === "meal-total") {
+      const q = parseNum(e.target.value);
+      const { grams, est } = mealTotals(m);
+      if (!q || Math.abs(q - (grams + est)) < 0.05) delete m.totalWeight; else m.totalWeight = q;
+      saveMeal(m); drawTotal(m);
     }
     else if (e.target.dataset.qty != null) {
+      const it = m.items[e.target.dataset.qty];
       const q = parseNum(e.target.value);
-      if (!q) { toast("Quantidade inválida"); render(); return; }
-      m.items[e.target.dataset.qty].qty = q; saveMeal(m);
-      document.getElementById("meal-total").textContent = totalText(m);
+      if (!q && get(it.foodId)?.mode === "unit") { toast("Informe quantas unidades"); render(); return; }
+      it.qty = q || null; saveMeal(m);
+      e.target.value = q ? fmtNum(q) : "";
+      drawTotal(m);
     }
   };
   let confirmDel = false;
@@ -474,10 +792,17 @@ function viewMeal(id) {
     const m = reload();
     switch (el.dataset.action) {
       case "name": m.name = el.dataset.value; m.autoName = false; saveMeal(m); render(); break;
+      case "set-time":
+        m.time = m.date === today() ? nowHHMM() : "12:00";
+        if (m.autoName) m.name = guessMealName(m.time);
+        saveMeal(m); render(); break;
       case "del-item": m.items.splice(Number(el.dataset.i), 1); saveMeal(m); render(); break;
-      case "add-food": openFoodPicker((foodId, qty) => {
-        const mm = reload(); mm.items.push({ foodId, qty }); saveMeal(mm); render(); toast("Alimento adicionado");
+      case "add-food": openFoodSheet((foodId, qty) => {
+        const mm = reload(); mm.items.push({ foodId, qty }); saveMeal(mm); render(); toast("Alimento salvo");
       }); break;
+      case "save-meal":
+        document.activeElement?.blur(); // confirma o campo que estiver sendo digitado
+        location.hash = "#/dia/" + m.date; toast("Refeição salva"); break;
       case "del-meal":
         if (!confirmDel) { confirmDel = true; el.textContent = "Toque de novo para confirmar"; return; }
         remove(id); location.hash = "#/dia/" + m.date; toast("Refeição excluída"); break;
@@ -485,7 +810,7 @@ function viewMeal(id) {
   };
 }
 
-/* ---------- Folha de escolha de alimento ---------- */
+/* ---------- Folha do alimento (escolher ou cadastrar na hora) ---------- */
 
 function openSheet(html) {
   const s = document.getElementById("sheet");
@@ -500,92 +825,162 @@ function closeSheet() {
 }
 document.getElementById("sheet-backdrop").addEventListener("click", closeSheet);
 
-function openFoodPicker(onPick) {
+// Digita o nome, escolhe um cadastrado ou segue com um novo; o cadastro acontece ao salvar.
+function openFoodSheet(onPick) {
   const usage = foodUsage();
   const foods = all("food").sort((a, b) => (usage[b.id] || 0) - (usage[a.id] || 0) || a.name.localeCompare(b.name, "pt-BR"));
+  let newMode = "weight";
 
   const s = openSheet(`
-    <div class="spread"><h2 style="margin:0;font-size:18px">Adicionar alimento</h2><button class="btn small" data-close>Fechar</button></div>
-    <input type="search" id="food-q" placeholder="Buscar ou cadastrar alimento" autocomplete="off">
-    <div class="food-list" id="food-list"></div>`);
-  const q = s.querySelector("#food-q");
-  const list = s.querySelector("#food-list");
+    <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>Alimento</h2><button class="btn small primary" data-save>Salvar</button></div>
+    <input type="search" id="fs-name" placeholder="Nome do alimento" autocomplete="off" enterkeyhint="next">
+    <div class="food-list" id="fs-list"></div>
+    <div id="fs-new" hidden>
+      <span class="muted small">Alimento novo, será cadastrado ao salvar. Como você mede?</span>
+      <div class="chips"><button class="chip" data-mode="unit">Por unidade</button><button class="chip on" data-mode="weight">Por peso (g)</button></div>
+      <label class="field" id="fs-uw-wrap" hidden>Peso médio de 1 unidade em gramas (opcional, para somar no total)
+        <input type="text" inputmode="decimal" id="fs-uw" placeholder="Ex.: 50"></label>
+    </div>
+    <label class="field" id="fs-qty-wrap" hidden><span id="fs-qty-label"></span>
+      <input type="text" inputmode="decimal" id="fs-qty" enterkeyhint="done"></label>
+    <p class="notice" id="fs-err" hidden></p>
+    <button class="btn primary block" data-save>Salvar alimento</button>`);
+  const $ = (sel) => s.querySelector(sel);
+  const nameIn = $("#fs-name");
 
+  const match = () => { const t = norm(nameIn.value); return t ? foods.find((f) => norm(f.name) === t) : null; };
   const draw = () => {
-    const term = norm(q.value);
-    const hits = foods.filter((f) => norm(f.name).includes(term)).slice(0, 40);
-    const exact = foods.some((f) => norm(f.name) === term);
-    list.innerHTML =
-      (term && !exact ? `<button class="food-opt new" data-new>+ Cadastrar “${esc(q.value.trim())}”</button>` : "") +
-      hits.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${esc(f.name)}</span><span class="muted small">${f.mode === "unit" ? "por unidade" : "por peso"}</span></button>`).join("") +
-      (!term && !foods.length ? `<p class="empty">Nenhum alimento cadastrado. Digite o nome para cadastrar o primeiro.</p>` : "");
+    const term = norm(nameIn.value);
+    const found = match();
+    const hits = found ? [] : foods.filter((f) => norm(f.name).includes(term)).slice(0, term ? 6 : 8);
+    $("#fs-list").innerHTML = hits.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${esc(f.name)}</span><span class="muted small">${f.mode === "unit" ? "por unidade" : "por peso"}</span></button>`).join("");
+    const mode = found ? found.mode : newMode;
+    $("#fs-new").hidden = !term || !!found;
+    $("#fs-uw-wrap").hidden = mode !== "unit";
+    $("#fs-qty-wrap").hidden = !term;
+    $("#fs-qty-label").textContent = mode === "unit" ? "Quantas unidades?" : "Peso em gramas (opcional)";
+    $("#fs-qty").placeholder = mode === "unit" ? "Ex.: 2" : "Ex.: 120";
+    $("#fs-err").hidden = true;
   };
   draw();
-  q.addEventListener("input", draw);
-  setTimeout(() => q.focus(), 50);
+  nameIn.addEventListener("input", draw);
+  nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (nameIn.value.trim()) $("#fs-qty").focus(); } });
+  $("#fs-qty").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+  setTimeout(() => nameIn.focus(), 50);
+
+  const fail = (msg) => { $("#fs-err").textContent = msg; $("#fs-err").hidden = false; };
+  function save() {
+    const name = nameIn.value.trim();
+    if (!name) return fail("Digite o nome do alimento.");
+    let f = match();
+    const qty = parseNum($("#fs-qty").value);
+    if ((f ? f.mode : newMode) === "unit" && !qty) return fail("Informe quantas unidades.");
+    if (f) { closeSheet(); return onPick(f.id, qty || null); }
+    const data = { name, mode: newMode };
+    const uw = parseNum($("#fs-uw").value);
+    if (newMode === "unit" && uw) data.unitWeight = uw;
+    groupsSheet(name, (extra) => {
+      const id = "food:" + uid();
+      put("food", id, { ...data, ...extra });
+      closeSheet();
+      onPick(id, qty || null);
+      rateFoods([get(id)]);
+    });
+  }
 
   s.onclick = (e) => {
     if (e.target.closest("[data-close]")) return closeSheet();
+    if (e.target.closest("[data-save]")) return save();
+    const mb = e.target.closest("[data-mode]");
+    if (mb) {
+      newMode = mb.dataset.mode;
+      s.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b === mb));
+      draw(); $("#fs-qty").focus(); return;
+    }
     const opt = e.target.closest(".food-opt");
-    if (!opt) return;
-    if (opt.dataset.new != null) qtyStep(null, q.value.trim(), onPick);
-    else qtyStep(get(opt.dataset.id), null, onPick);
+    if (opt) { nameIn.value = get(opt.dataset.id).name; draw(); $("#fs-qty").focus(); }
   };
 }
 
-// Quantidade do alimento escolhido; com `food` nulo, cadastra um novo antes.
-function qtyStep(food, newName, onPick) {
-  let mode = food?.mode || null;
+/* ---------- Grupos do alimento ---------- */
+
+const groupChips = (selected = []) =>
+  `<div class="chips">${FOOD_GROUPS.map((g) => `<button type="button" class="chip ${selected.includes(g) ? "on" : ""}" data-group="${esc(g)}">${esc(g)}</button>`).join("")}</div>`;
+const readGroups = (root) => [...root.querySelectorAll("[data-group].on")].map((b) => b.dataset.group);
+const groupsText = (f) => (f?.groups || []).join(", ");
+const sameGroups = (a, b) => [...a].sort().join() === [...b].sort().join();
+const SOURCE_TEXT = { tabela: "pela tabela de referência", ia: "pela IA" };
+
+// Os grupos são "manuais" quando a pessoa escolheu ou corrigiu à mão; esses viram exemplo para a IA.
+function manualFlag(groups, suggested, prev) {
+  if (suggested) return !sameGroups(groups, suggested);
+  if (prev) return sameGroups(groups, prev.groups || []) ? !!prev.groupsManual : true;
+  return groups.length > 0;
+}
+
+// Sugestão do servidor: tabela de referência primeiro, IA para o resto.
+// Vai junto o que a pessoa já classificou à mão, para a IA seguir o mesmo critério.
+async function fetchGroups(foods) {
+  const asked = new Set(foods.map((f) => norm(f.name)));
+  const examples = all("food")
+    .filter((f) => f.groupsManual && !asked.has(norm(f.name)))
+    .slice(-40)
+    .map((f) => ({ name: f.name, prep: f.prep || "", groups: f.groups || [] }));
+  const res = await fetch("/api/groups", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + password },
+    body: JSON.stringify({ foods: foods.map((f) => ({ name: f.name, prep: f.prep || "" })), examples }),
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const out = await res.json();
+  return { groups: out.groups || {}, source: out.source || {} };
+}
+
+// Botão "Automático": marca os chips de `root` e devolve os grupos sugeridos (ou null).
+async function autoGroups(btn, root, name, prep) {
+  if (!name) { toast("Digite o nome primeiro"); return null; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Pesquisando…";
+  let groups = null;
+  try {
+    const r = await fetchGroups([{ name, prep }]);
+    groups = r.groups[name];
+    if (!groups) throw new Error("sem resposta");
+    root.querySelectorAll("[data-group]").forEach((c) => c.classList.toggle("on", groups.includes(c.dataset.group)));
+    const src = root.querySelector("[data-auto-src]");
+    if (src) src.textContent = `Classificado ${SOURCE_TEXT[r.source[name]] || ""}${groups.length ? "" : ": nenhum grupo se aplica"}. Confira e ajuste se precisar.`;
+  } catch { toast("Não foi possível pesquisar agora"); }
+  btn.disabled = false; btn.textContent = label;
+  return groups;
+}
+
+const prepField = (value = "") => `
+  <label class="field">Preparo ou ingredientes (opcional, ajuda o Automático)
+    <input type="text" id="prep" value="${esc(value)}" placeholder="Ex.: assado, caseiro, massa de trigo, com queijo"></label>`;
+
+// Janela que aparece ao cadastrar um alimento novo, para marcar os grupos dele (opcional).
+// onDone recebe { groups, prep, groupsManual }.
+function groupsSheet(name, onDone) {
   const s = openSheet(`
-    <div class="spread"><h2 style="margin:0;font-size:18px">${food ? esc(food.name) : "Novo alimento"}</h2><button class="btn small" data-close>Fechar</button></div>
-    ${food ? "" : `
-      <label class="field">Nome<input type="text" id="nf-name" value="${esc(newName)}"></label>
-      <span class="muted small">Como você mede este alimento?</span>
-      <div class="chips"><button class="chip" data-mode="unit">Por unidade</button><button class="chip" data-mode="weight">Por peso (g)</button></div>
-      <label class="field" id="nf-uw-wrap" hidden>Peso médio de 1 unidade em gramas (opcional, para somar no total)
-        <input type="text" inputmode="decimal" id="nf-uw" placeholder="Ex.: 50"></label>`}
-    <label class="field" id="qty-wrap" ${mode ? "" : "hidden"}><span id="qty-label">${mode === "unit" ? "Quantas unidades?" : "Quantos gramas?"}</span>
-      <input type="text" inputmode="decimal" id="qty" placeholder="${mode === "unit" ? "Ex.: 2" : "Ex.: 120"}"></label>
-    <p class="notice" id="qty-err" hidden></p>
-    <button class="btn primary block" id="qty-ok">${food ? "Adicionar" : "Cadastrar e adicionar"}</button>`);
-
-  const setMode = (m) => {
-    mode = m;
-    s.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
-    s.querySelector("#nf-uw-wrap").hidden = m !== "unit";
-    s.querySelector("#qty-wrap").hidden = false;
-    s.querySelector("#qty-label").textContent = m === "unit" ? "Quantas unidades?" : "Quantos gramas?";
-    s.querySelector("#qty").placeholder = m === "unit" ? "Ex.: 2" : "Ex.: 120";
-  };
-  if (food) setTimeout(() => s.querySelector("#qty").focus(), 50);
-
-  s.onclick = (e) => {
-    if (e.target.closest("[data-close]")) return closeSheet();
-    const mb = e.target.closest("[data-mode]");
-    if (mb) { setMode(mb.dataset.mode); s.querySelector("#qty").focus(); return; }
-    if (e.target.id !== "qty-ok") return;
-    const err = s.querySelector("#qty-err");
-    const fail = (msg) => { err.textContent = msg; err.hidden = false; };
-    let f = food;
-    if (!f) {
-      const name = s.querySelector("#nf-name").value.trim();
-      if (!name) return fail("Digite o nome do alimento.");
-      if (!mode) return fail("Escolha se é por unidade ou por peso.");
-      const dup = all("food").find((x) => norm(x.name) === norm(name));
-      if (dup) f = dup;
-      else {
-        const id = "food:" + uid();
-        const data = { name, mode };
-        const uw = parseNum(s.querySelector("#nf-uw").value);
-        if (mode === "unit" && uw) data.unitWeight = uw;
-        put("food", id, data);
-        f = { ...data, id };
-      }
+    <div class="sheet-head"><button class="btn small" data-skip>Pular</button><h2>Tipo do alimento</h2><button class="btn small primary" data-save>Salvar</button></div>
+    <p class="muted small" style="margin:0">Marque os grupos de <b>${esc(name)}</b>, ou toque em Automático para classificar. Pode marcar mais de um, ou pular.</p>
+    ${prepField()}
+    <button class="btn" data-auto>✨ Automático</button>
+    <span class="muted small" data-auto-src></span>
+    ${groupChips()}
+    <button class="btn primary block" data-save>Salvar alimento</button>`);
+  let suggested = null;
+  const prep = () => s.querySelector("#prep").value.trim();
+  s.onclick = async (e) => {
+    const g = e.target.closest("[data-group]");
+    if (g) return g.classList.toggle("on");
+    const auto = e.target.closest("[data-auto]");
+    if (auto) { suggested = (await autoGroups(auto, s, name, prep())) || suggested; return; }
+    if (e.target.closest("[data-skip]")) return onDone({ groups: [], prep: prep(), groupsManual: false });
+    if (e.target.closest("[data-save]")) {
+      const groups = readGroups(s);
+      onDone({ groups, prep: prep(), groupsManual: manualFlag(groups, suggested, null) });
     }
-    const qty = parseNum(s.querySelector("#qty").value);
-    if (!qty) return fail(f.mode === "unit" ? "Informe quantas unidades." : "Informe o peso em gramas.");
-    closeSheet();
-    onPick(f.id, qty);
   };
 }
 
@@ -597,13 +992,14 @@ function viewFoods() {
   const foods = all("food").sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   $view.innerHTML = `
     <input type="search" id="foods-q" placeholder="Buscar alimento" autocomplete="off">
+    ${foods.length ? `<button class="btn" data-action="suggest-groups">Preencher grupos automaticamente</button>` : ""}
     <div class="card" id="foods-list"></div>
     <button class="btn" data-action="new-food">+ Novo alimento</button>`;
   const draw = () => {
     const term = norm(document.getElementById("foods-q").value);
     const rows = foods.filter((f) => norm(f.name).includes(term));
     document.getElementById("foods-list").innerHTML = rows.length
-      ? rows.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${esc(f.name)}<br><span class="muted small">${f.mode === "unit" ? "por unidade" + (f.unitWeight ? ` · ${fmtNum(f.unitWeight)} g cada` : "") : "por peso"}</span></span><span class="muted small">${usage[f.id] || 0}×</span></button>`).join("")
+      ? rows.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${HEALTH[f.health] ? HEALTH[f.health].emoji + " " : ""}${esc(f.name)}<br><span class="muted small">${f.mode === "unit" ? "por unidade" + (f.unitWeight ? ` · ${fmtNum(f.unitWeight)} g cada` : "") : "por peso"}${f.groups?.length ? ` · ${esc(groupsText(f))}` : ""}${f.groupsManual ? " ✓" : ""}</span></span><span class="muted small">${usage[f.id] || 0}×</span></button>`).join("")
       : `<p class="empty">${foods.length ? "Nada encontrado." : "Nenhum alimento cadastrado ainda. Eles também são cadastrados na hora, dentro de uma refeição."}</p>`;
   };
   draw();
@@ -613,24 +1009,108 @@ function viewFoods() {
     const opt = e.target.closest(".food-opt");
     if (opt) return editFood(get(opt.dataset.id), usage[opt.dataset.id] || 0);
     if (e.target.closest("[data-action=new-food]")) editFood(null, 0);
+    if (e.target.closest("[data-action=suggest-groups]")) suggestGroups();
+  };
+}
+
+// Sugere grupos para todos os alimentos cadastrados e mostra para revisar.
+// Os que a pessoa já corrigiu à mão (✓) ficam de fora.
+async function suggestGroups() {
+  const all_ = all("food").sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const foods = all_.filter((f) => !f.groupsManual);
+  const kept = all_.length - foods.length;
+  if (!foods.length) return toast("Todos os alimentos já foram conferidos por você");
+  const s = openSheet(`
+    <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>Grupos</h2><span></span></div>
+    <p class="empty">Pesquisando os grupos de ${plural(foods.length, "alimento", "alimentos")}…</p>`);
+  s.onclick = (e) => { if (e.target.closest("[data-close]")) closeSheet(); };
+
+  let found, source;
+  try {
+    ({ groups: found, source } = await fetchGroups(foods));
+  } catch {
+    if (!s.hidden) { closeSheet(); toast("Não foi possível pesquisar agora. Confira a internet e tente de novo."); }
+    return;
+  }
+  if (s.hidden) return; // cancelado enquanto pesquisava
+
+  const fresh = foods.filter((f) => !(f.groups || []).length && found[f.name]?.length);
+  const changed = foods.filter((f) => (f.groups || []).length && found[f.name] && !sameGroups(f.groups, found[f.name]));
+  if (!fresh.length && !changed.length) { closeSheet(); return toast("Nenhuma sugestão nova para os seus alimentos"); }
+
+  const srcTag = (f) => `<span class="pill">${source[f.name] === "tabela" ? "tabela" : "IA"}</span>`;
+  const sugChips = (f) => found[f.name].map((g) => `<button type="button" class="chip on" data-group="${esc(g)}">${esc(g)}</button>`).join("");
+  openSheet(`
+    <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>Revisar grupos</h2><button class="btn small primary" data-save>Aplicar</button></div>
+    ${fresh.length ? `<span class="q-label">Sem grupo · ${plural(fresh.length, "alimento será preenchido", "alimentos serão preenchidos")}</span>
+      <span class="muted small">Toque num grupo para tirar.</span>
+      ${fresh.map((f) => `<div class="sg-item" data-id="${f.id}"><span><b>${esc(f.name)}</b> ${srcTag(f)}</span><div class="chips">${sugChips(f)}</div></div>`).join("")}` : ""}
+    ${changed.length ? `<span class="q-label">Já têm grupo · quer alterar?</span>
+      ${changed.map((f) => `<div class="sg-item" data-id="${f.id}" data-changed>
+        <span><b>${esc(f.name)}</b> ${srcTag(f)}</span>
+        <span class="small">Atual: ${esc(groupsText(f))}</span>
+        <span class="small">Sugerido: ${esc(found[f.name].join(", ") || "nenhum grupo")}</span>
+        <div class="chips"><button type="button" class="chip on" data-keep="1">Manter atual</button><button type="button" class="chip" data-keep="0">Usar sugerido</button></div>
+      </div>`).join("")}` : ""}
+    <span class="muted small">"tabela" vem da tabela de referência do app; "IA" é sugestão automática, confira antes de aplicar.${kept ? ` ${plural(kept, "alimento corrigido por você ficou", "alimentos corrigidos por você ficaram")} de fora.` : ""}</span>
+    <button class="btn primary block" data-save>Aplicar</button>`);
+
+  const sheet = document.getElementById("sheet");
+  sheet.onclick = (e) => {
+    if (e.target.closest("[data-close]")) return closeSheet();
+    const g = e.target.closest("[data-group]");
+    if (g) return g.classList.toggle("on");
+    const k = e.target.closest("[data-keep]");
+    if (k) return k.parentElement.querySelectorAll("[data-keep]").forEach((b) => b.classList.toggle("on", b === k));
+    if (!e.target.closest("[data-save]")) return;
+    let n = 0;
+    for (const el of sheet.querySelectorAll(".sg-item")) {
+      const f = get(el.dataset.id);
+      if (!f) continue;
+      let groups;
+      if (el.dataset.changed != null) {
+        if (el.querySelector("[data-keep].on")?.dataset.keep !== "0") continue;
+        groups = found[f.name];
+      } else groups = readGroups(el);
+      const { id, ...data } = f;
+      put("food", id, { ...data, groups, groupsManual: manualFlag(groups, found[f.name], null) });
+      n++;
+    }
+    closeSheet(); render();
+    toast(n ? `${plural(n, "alimento atualizado", "alimentos atualizados")}` : "Nada foi alterado");
   };
 }
 
 function editFood(food, uses) {
   let mode = food?.mode || "weight";
   const s = openSheet(`
-    <div class="spread"><h2 style="margin:0;font-size:18px">${food ? "Editar alimento" : "Novo alimento"}</h2><button class="btn small" data-close>Fechar</button></div>
+    <div class="sheet-head"><button class="btn small" data-close>Cancelar</button><h2>${food ? "Editar alimento" : "Novo alimento"}</h2><button class="btn small primary" data-save>Salvar</button></div>
     <label class="field">Nome<input type="text" id="ef-name" value="${esc(food?.name)}"></label>
     <div class="chips"><button class="chip ${mode === "unit" ? "on" : ""}" data-mode="unit">Por unidade</button><button class="chip ${mode === "weight" ? "on" : ""}" data-mode="weight">Por peso (g)</button></div>
     <label class="field" id="ef-uw-wrap" ${mode === "unit" ? "" : "hidden"}>Peso médio de 1 unidade em gramas (opcional)
       <input type="text" inputmode="decimal" id="ef-uw" value="${food?.unitWeight ? fmtNum(food.unitWeight) : ""}"></label>
+    ${prepField(food?.prep)}
+    <div class="spread"><span class="muted small">Grupos (opcional, pode marcar mais de um)</span><button class="btn small" data-auto>✨ Automático</button></div>
+    <span class="muted small" data-auto-src>${food?.groupsManual ? "✓ Grupos conferidos por você: servem de exemplo para o Automático." : ""}</span>
+    ${groupChips(food?.groups)}
+    <span class="muted small">Nota de saúde (para a pontuação)${HEALTH[food?.health] && food.healthSource ? `: definida ${HEALTH_SOURCE[food.healthSource] || ""}` : ""}</span>
+    <div class="chips">${Object.entries(HEALTH).map(([k, h]) => `<button type="button" class="chip ${food?.health === k ? "on" : ""}" data-health="${k}">${h.emoji} ${h.label}</button>`).join("")}</div>
     ${food && uses ? `<p class="muted small">Usado em ${plural(uses, "refeição", "refeições")}. Mudar a medida muda como as quantidades já registradas são lidas.</p>` : ""}
     <p class="notice" id="ef-err" hidden></p>
-    <button class="btn primary block" id="ef-save">Salvar</button>
+    <button class="btn primary block" data-save>Salvar</button>
     ${food ? `<button class="btn danger block" id="ef-del">Excluir alimento</button>` : ""}`);
-  let confirmDel = false;
-  s.onclick = (e) => {
+  let confirmDel = false, suggested = null;
+  s.onclick = async (e) => {
     if (e.target.closest("[data-close]")) return closeSheet();
+    const g = e.target.closest("[data-group]");
+    if (g) return g.classList.toggle("on");
+    const hb = e.target.closest("[data-health]");
+    if (hb) return s.querySelectorAll("[data-health]").forEach((b) => b.classList.toggle("on", b === hb && !b.classList.contains("on")));
+    const auto = e.target.closest("[data-auto]");
+    if (auto) {
+      suggested = (await autoGroups(auto, s, s.querySelector("#ef-name").value.trim(), s.querySelector("#prep").value.trim())) || suggested;
+      return;
+    }
     const err = s.querySelector("#ef-err");
     const mb = e.target.closest("[data-mode]");
     if (mb) {
@@ -639,14 +1119,21 @@ function editFood(food, uses) {
       s.querySelector("#ef-uw-wrap").hidden = mode !== "unit";
       return;
     }
-    if (e.target.id === "ef-save") {
+    if (e.target.closest("[data-save]")) {
       const name = s.querySelector("#ef-name").value.trim();
       if (!name) { err.textContent = "Digite o nome."; err.hidden = false; return; }
-      const data = { name, mode };
+      const groups = readGroups(s);
+      const data = { name, mode, groups, prep: s.querySelector("#prep").value.trim(), groupsManual: manualFlag(groups, suggested, food) };
       const uw = parseNum(s.querySelector("#ef-uw").value);
       if (mode === "unit" && uw) data.unitWeight = uw;
-      put("food", food?.id || "food:" + uid(), data);
+      const health = s.querySelector("[data-health].on")?.dataset.health;
+      if (health) Object.assign(data, health === food?.health
+        ? { health, healthSource: food.healthSource, healthManual: !!food.healthManual }
+        : { health, healthSource: "manual", healthManual: true });
+      const id = food?.id || "food:" + uid();
+      put("food", id, data);
       closeSheet(); render(); toast("Alimento salvo");
+      if (!health) rateFoods([get(id)]);
     }
     if (e.target.id === "ef-del") {
       if (uses) { err.textContent = `Este alimento está em ${plural(uses, "refeição", "refeições")}. Remova-o antes de excluir.`; err.hidden = false; return; }
@@ -660,6 +1147,19 @@ function editFood(food, uses) {
 
 const PERIODS = [["1", "Dia"], ["3", "3 dias"], ["7", "Semana"], ["30", "Mês"]];
 let analysis = { days: LS.get("da_period", "7"), end: null };
+
+const INT_W = { leve: 1, moderado: 2, forte: 3 };
+const intText = (w) => (w < 1.5 ? "leve" : w < 2.5 ? "moderada" : "forte");
+const INT_LABEL = Object.fromEntries(INTENSITIES);
+const GAP_BUCKETS = [[0, 1, "até 1h"], [1, 2, "1 a 2h"], [2, 4, "2 a 4h"], [4, Infinity, "mais de 4h"]];
+const bucketize = (gaps) => GAP_BUCKETS.map(([a, b, label]) => ({ label, n: gaps.filter((g) => g >= a * 3600000 && g < b * 3600000).length }));
+const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const pctText = (x) => `${Math.round(x * 100)}%`;
+const FACTORS = [
+  ["sleep", "Dormiu bem?", [["sim", "Sim"], ["nao", "Não"]]],
+  ["exercise", "Atividade física", [["sim", "Sim"], ["nao", "Não"]]],
+  ["mood", "Emocional", [["bem", "Bem"], ["regular", "Mais ou menos"], ["mal", "Mal"]]],
+];
 
 function analyze(startDate, endDate) {
   const { winMin, winMax } = settings();
@@ -678,40 +1178,168 @@ function analyze(startDate, endDate) {
     for (const s of timed) symptoms.push({ ...s, date: d.date, t: at(d.date, s.time) });
   }
   symptoms.sort((a, b) => a.t - b.t);
+  const after = (t) => symptoms.filter((x) => x.t - t >= lo && x.t - t <= hi);
 
-  // Cada alimento conta uma vez por refeição.
-  const consumptions = [];
-  for (const m of timedMeals) {
+  // Cada refeição com horário: sintomas na janela depois dela e quantidade de cada alimento.
+  const mealInfo = timedMeals.map((m) => {
     const t = at(m.date, m.time);
-    for (const foodId of new Set((m.items || []).map((i) => i.foodId))) consumptions.push({ foodId, t, meal: m });
-  }
+    const qty = {};
+    for (const it of m.items || []) if (it.qty) qty[it.foodId] = (qty[it.foodId] || 0) + it.qty;
+    return { m, t, hits: after(t), qty, foodIds: [...new Set((m.items || []).map((i) => i.foodId))] };
+  });
+  // Linha de base: quanto das refeições em geral vem seguida de sintoma.
+  const base = mealInfo.length ? mealInfo.filter((x) => x.hits.length).length / mealInfo.length : 0;
 
-  const stats = {};
-  for (const c of consumptions) {
-    const s = (stats[c.foodId] ||= { foodId: c.foodId, eaten: 0, before: 0, gaps: [] });
+  // Estatística de um alimento, grupo ou par (cada um conta uma vez por refeição).
+  const newStat = (key) => ({ key, eaten: 0, before: 0, gaps: [], types: {}, ints: [], qtyHit: [], qtyMiss: [] });
+  const add = (s, x, qty) => {
     s.eaten++;
-    const gaps = symptoms.map((x) => x.t - c.t).filter((g) => g >= lo && g <= hi);
-    if (gaps.length) { s.before++; s.gaps.push(Math.min(...gaps)); }
-  }
-  const ranking = Object.values(stats)
-    .map((s) => ({ ...s, pct: s.before / s.eaten, gap: s.gaps.length ? s.gaps.reduce((a, b) => a + b, 0) / s.gaps.length : null }))
-    .sort((a, b) => b.before - a.before || b.pct - a.pct || b.eaten - a.eaten);
+    if (x.hits.length) {
+      s.before++;
+      s.gaps.push(Math.min(...x.hits.map((h) => h.t - x.t)));
+      for (const h of x.hits) {
+        s.types[h.type] = (s.types[h.type] || 0) + 1;
+        if (INT_W[h.intensity]) s.ints.push(INT_W[h.intensity]);
+      }
+    }
+    if (qty) (x.hits.length ? s.qtyHit : s.qtyMiss).push(qty);
+  };
+  const finish = (s) => ({
+    ...s, pct: s.before / s.eaten, lift: base ? s.before / s.eaten / base : null,
+    gap: avg(s.gaps), hist: bucketize(s.gaps), intensity: avg(s.ints),
+  });
+  // Mais suspeitos primeiro; quem tem poucos dados (menos de 3 vezes) vai para o fim.
+  const order = (a, b) => (b.eaten >= 3) - (a.eaten >= 3) || b.pct - a.pct || b.before - a.before || b.eaten - a.eaten;
 
-  // Para cada sintoma, o que foi comido na janela antes dele.
+  const foods = {}, groups = {}, pairs = {};
+  for (const x of mealInfo) {
+    const gset = new Set();
+    for (const id of x.foodIds) {
+      add((foods[id] ||= newStat(id)), x, x.qty[id]);
+      for (const g of get(id)?.groups || []) gset.add(g);
+    }
+    for (const g of gset) add((groups[g] ||= newStat(g)), x);
+    const ids = [...x.foodIds].sort();
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++) add((pairs[ids[i] + "|" + ids[j]] ||= newStat([ids[i], ids[j]])), x);
+  }
+  const ranking = Object.values(foods).map(finish).sort(order);
+  const groupRanking = Object.values(groups).map(finish).sort(order);
+  // Pares comidos juntos pelo menos 2 vezes e que vêm antes de sintoma mais que a média.
+  const pairRanking = Object.values(pairs).map(finish)
+    .filter((p) => p.eaten >= 2 && p.before && p.pct > base)
+    .sort((a, b) => b.pct - a.pct || b.before - a.before).slice(0, 8);
+
+  // Para cada sintoma, o que foi comido na janela antes dele (mais recente primeiro).
   const perSymptom = symptoms.map((s) => ({
     ...s,
-    foods: consumptions
-      .filter((c) => s.t - c.t >= lo && s.t - c.t <= hi)
+    foods: mealInfo
+      .filter((x) => s.t - x.t >= lo && s.t - x.t <= hi)
       .sort((a, b) => b.t - a.t)
-      .map((c) => ({ foodId: c.foodId, gap: s.t - c.t, meal: c.meal })),
+      .flatMap((x) => x.foodIds.map((foodId) => ({ foodId, gap: s.t - x.t, meal: x.m }))),
   }));
+  const typeCount = {}, intCount = {};
+  for (const s of symptoms) {
+    typeCount[s.type] = (typeCount[s.type] || 0) + 1;
+    intCount[s.intensity || "sem"] = (intCount[s.intensity || "sem"] || 0) + 1;
+  }
+  const nearestGaps = perSymptom.filter((s) => s.foods.length).map((s) => s.foods[0].gap);
+
+  // Sono, exercício e humor: em quantos dias com cada resposta houve sintoma.
+  const dates = [...new Set([...meals.map((m) => m.date), ...days.map((d) => d.date)])];
+  const dayObjs = dates.map(getDay);
+  const factors = FACTORS.map(([field, label, opts]) => ({
+    label,
+    rows: opts.map(([v, text]) => {
+      const ds = dayObjs.filter((d) => d[field] === v);
+      return { text, n: ds.length, sym: ds.filter(hasSymptoms).length };
+    }),
+  })).filter((f) => f.rows.some((r) => r.n));
 
   return {
-    ranking, perSymptom, symptoms,
-    mealCount: meals.length, untimedMeals: meals.length - timedMeals.length,
+    ranking, groupRanking, pairRanking, perSymptom, symptoms, base, typeCount, intCount,
+    gapHist: bucketize(nearestGaps), factors,
+    mealCount: meals.length, timedMealCount: timedMeals.length, untimedMeals: meals.length - timedMeals.length,
     symptomDays: new Set(symptoms.map((s) => s.date)).size + giNoTime, giNoTime,
     winText: `${fmtDur(lo)} a ${fmtDur(hi)} antes`,
   };
+}
+
+// Dias com sintoma por semana (8 semanas até `endDate`) e sequências sem sintoma.
+function evolution(endDate, weeks = 8) {
+  const dayRec = {};
+  for (const d of all("day")) dayRec[d.date] = d;
+  const logged = new Set([...all("meal").map((m) => m.date), ...Object.keys(dayRec)]);
+  const symDay = (s) => !!dayRec[s] && hasSymptoms(dayRec[s]);
+  const out = [];
+  for (let w = weeks - 1; w >= 0; w--) {
+    const wEnd = addDays(endDate, -7 * w), wStart = addDays(wEnd, -6);
+    let sym = 0, n = 0;
+    for (let i = 0; i < 7; i++) { const s = addDays(wStart, i); if (logged.has(s)) n++; if (symDay(s)) sym++; }
+    out.push({ wStart, wEnd, sym, logged: n });
+  }
+  let streak = 0;
+  let s = logged.has(endDate) ? endDate : addDays(endDate, -1); // o dia de hoje pode ainda não ter registro
+  for (; logged.has(s) && !symDay(s); s = addDays(s, -1)) streak++;
+  let best = 0, run = 0;
+  for (let i = 89; i >= 0; i--) {
+    const d = addDays(endDate, -i);
+    if (logged.has(d) && !symDay(d)) best = Math.max(best, ++run); else run = 0;
+  }
+  return { weeks: out, streak, best };
+}
+
+/* Gráficos simples em HTML (uma série cada; o valor fica escrito ao lado ou acima). */
+
+function vbars(items) {
+  const m = Math.max(1, ...items.map((i) => i.value));
+  return `<div class="vbars">${items.map((i) => `
+    <button type="button" class="vbar" data-tip="${esc(i.tip)}" aria-label="${esc(i.tip)}">
+      <span class="vbar-val">${i.value}</span>
+      <span class="vbar-track"><span class="vbar-fill" style="height:${Math.round((i.value / m) * 100)}%"></span></span>
+      <span class="vbar-x">${esc(i.label)}</span></button>`).join("")}</div>`;
+}
+
+function hbars(items, { max, tone = "" } = {}) {
+  const m = max || Math.max(1, ...items.map((i) => i.value));
+  return `<div class="hbars">${items.map((i) => `
+    <div class="hbar"><span class="hbar-label">${esc(i.label)}</span>
+      <span class="bar ${tone}"><span style="width:${Math.round((i.value / m) * 100)}%"></span></span>
+      <span class="hbar-val">${esc(i.text ?? String(i.value))}</span></div>`).join("")}</div>`;
+}
+
+const liftPill = (x) => (x.lift == null ? "" : x.lift >= 1.5 && x.eaten >= 3
+  ? `<span class="pill alert">${fmtNum(x.lift)}× a média</span>`
+  : `<span class="pill">${fmtNum(x.lift)}× a média</span>`);
+const typesText = (types) => Object.entries(types).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} (${n})`).join(", ");
+const portionText = (x, f) => {
+  const u = f?.mode === "unit" ? "un." : "g";
+  const parts = [];
+  if (x.qtyHit.length) parts.push(`com sintoma ${fmtNum(avg(x.qtyHit))} ${u}`);
+  if (x.qtyMiss.length) parts.push(`sem sintoma ${fmtNum(avg(x.qtyMiss))} ${u}`);
+  return parts.join(" · ");
+};
+const typicalGap = (x) => { const b = [...x.hist].sort((p, q) => q.n - p.n)[0]; return b && b.n ? b.label : ""; };
+
+function foodRow(x) {
+  const f = get(x.foodId ?? x.key);
+  const portion = portionText(x, f);
+  return `<details class="rank-row">
+    <summary>
+      <div class="spread"><span class="rank-name">${esc(foodName(x.key))}</span>
+        <span class="num ${x.pct >= 0.5 && x.eaten >= 3 ? "pill alert" : "muted"}">${pctText(x.pct)}</span></div>
+      <div class="bar"><span style="width:${pctText(x.pct)}"></span></div>
+      <span class="small muted">Comido ${x.eaten}×, ${x.before}× antes de sintoma ${liftPill(x)}${x.eaten < 3 ? ' <span class="pill">poucos dados</span>' : ""}</span>
+    </summary>
+    <div class="rank-more">
+      ${f?.groups?.length ? `<div><b>Grupos:</b> ${esc(groupsText(f))}</div>` : ""}
+      ${x.lift != null ? `<div><b>Comparado à média:</b> veio antes de sintoma em ${pctText(x.pct)} das vezes; nas suas refeições em geral isso acontece em ${pctText(x.pct / x.lift)}.</div>` : ""}
+      ${portion ? `<div><b>Porção média:</b> ${esc(portion)}</div>` : ""}
+      ${x.before ? `<div><b>Sintomas que vieram depois:</b> ${esc(typesText(x.types))}${x.intensity ? ` · intensidade média ${intText(x.intensity)}` : ""}</div>
+      <div><b>Tempo até o sintoma</b>${x.gap != null ? ` (média ${fmtDur(x.gap)})` : ""}</div>
+      ${hbars(x.hist.map((b) => ({ label: b.label, value: b.n, text: b.n ? `${b.n}×` : "" })), { tone: "accent" })}` : ""}
+    </div>
+  </details>`;
 }
 
 function viewAnalysis() {
@@ -720,25 +1348,68 @@ function viewAnalysis() {
   const n = Number(analysis.days);
   const start = addDays(end, -(n - 1));
   const r = analyze(start, end);
+  const ev = evolution(end);
   const rangeText = n === 1 ? fmtLong(end) : `${fmtShort(start)} a ${fmtShort(end)}`;
 
   const warn = [];
   if (r.untimedMeals) warn.push(`${plural(r.untimedMeals, "refeição sem horário ficou", "refeições sem horário ficaram")} de fora.`);
   if (r.giNoTime) warn.push(`${plural(r.giNoTime, "dia com sintoma sem horário ficou", "dias com sintoma sem horário ficaram")} de fora.`);
 
-  const table = r.ranking.length && r.symptoms.length ? `
-    <div class="rank">${r.ranking.map((x) => `
-      <div class="rank-row">
-        <div class="spread"><span class="rank-name">${esc(foodName(x.foodId))}</span>
-          <span class="num ${x.pct >= 0.5 && x.eaten >= 3 ? "pill alert" : "muted"}">${Math.round(x.pct * 100)}%</span></div>
-        <div class="bar"><span style="width:${Math.round(x.pct * 100)}%"></span></div>
-        <span class="small muted">Comido ${x.eaten}×, ${x.before}× antes de sintoma${x.gap != null ? ` · intervalo médio ${fmtDur(x.gap)}` : ""}${x.eaten < 3 ? ' · <span class="pill">poucos dados</span>' : ""}</span>
-      </div>`).join("")}</div>` : `<p class="empty">${r.symptoms.length ? "Nenhuma refeição com horário neste período." : "Nenhum sintoma com horário neste período."}</p>`;
+  const hasData = r.ranking.length && r.symptoms.length;
+  const table = hasData
+    ? `<div class="rank">${r.ranking.map((x) => foodRow({ ...x, foodId: x.key })).join("")}</div>`
+    : `<p class="empty">${r.symptoms.length ? "Nenhuma refeição com horário neste período." : "Nenhum sintoma com horário neste período."}</p>`;
+
+  const groupsCard = !hasData ? "" : r.groupRanking.length ? `
+    <div class="card"><h2>Grupos de alimentos</h2>
+      <span class="muted small">Refeições com algum alimento do grupo e quantas vieram antes de sintoma.</span>
+      <div class="rank">${r.groupRanking.map((g) => `
+        <div class="rank-row">
+          <div class="spread"><span class="rank-name">${esc(g.key)}</span><span class="num ${g.pct >= 0.5 && g.eaten >= 3 ? "pill alert" : "muted"}">${pctText(g.pct)}</span></div>
+          <div class="bar"><span style="width:${pctText(g.pct)}"></span></div>
+          <span class="small muted">Em ${plural(g.eaten, "refeição", "refeições")}, ${g.before}× antes de sintoma ${liftPill(g)}${g.before ? ` · ${esc(typesText(g.types))}` : ""}</span>
+        </div>`).join("")}</div></div>`
+    : `<div class="card"><h2>Grupos de alimentos</h2><p class="muted small">Marque os grupos dos alimentos (fritura, FODMAP, lactose…) na aba Alimentos para ver a análise por grupo.</p></div>`;
+
+  const pairsCard = r.pairRanking.length ? `
+    <div class="card"><h2>Combinações</h2>
+      <span class="muted small">Alimentos comidos juntos que vêm antes de sintoma mais do que a média (${pctText(r.base)}).</span>
+      ${r.pairRanking.map((p) => `<div class="rank-row"><div class="spread"><span class="rank-name">${esc(foodName(p.key[0]))} + ${esc(foodName(p.key[1]))}</span><span class="num muted">${pctText(p.pct)}</span></div>
+        <span class="small muted">Juntos ${p.eaten}×, ${p.before}× antes de sintoma ${liftPill(p)}</span></div>`).join("")}
+    </div>` : "";
+
+  const typeItems = Object.entries(r.typeCount).sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ label: t, value: c }));
+  const intItems = [...INTENSITIES, ["sem", "Não informada"]].filter(([v]) => r.intCount[v]).map(([v, label]) => ({ label, value: r.intCount[v] }));
+  const symptomsCard = r.symptoms.length ? `
+    <div class="card"><h2>Sintomas do período</h2>
+      ${hbars(typeItems)}
+      <span class="q-label small">Intensidade</span>
+      ${hbars(intItems)}
+      ${r.gapHist.some((b) => b.n) ? `<span class="q-label small">Tempo entre a última refeição e o sintoma</span>
+      ${hbars(r.gapHist.map((b) => ({ label: b.label, value: b.n })), { tone: "accent" })}` : ""}
+    </div>` : "";
+
+  const factorsCard = r.factors.length ? `
+    <div class="card"><h2>Outros fatores do dia</h2>
+      <span class="muted small">Em quantos dias com cada resposta houve sintoma.</span>
+      ${r.factors.map((f) => `<span class="q-label small">${esc(f.label)}</span>
+        ${hbars(f.rows.filter((x) => x.n).map((x) => ({ label: x.text, value: x.sym / x.n, text: `${x.sym} de ${plural(x.n, "dia", "dias")}` })), { max: 1 })}`).join("")}
+    </div>` : "";
+
+  const evCard = `
+    <div class="card"><h2>Evolução</h2>
+      <span class="muted small">Dias com sintoma em cada semana (8 semanas até ${esc(fmtShort(end))}). Toque numa barra para ver detalhes.</span>
+      ${vbars(ev.weeks.map((w) => ({ label: fmtShort(w.wEnd).replace(/ de /, " "), value: w.sym, tip: `${fmtShort(w.wStart)} a ${fmtShort(w.wEnd)}: ${plural(w.sym, "dia", "dias")} com sintoma, ${plural(w.logged, "dia registrado", "dias registrados")}` })))}
+      <div class="stats two">
+        <div class="stat"><b>${ev.streak}</b><span>${ev.streak === 1 ? "dia" : "dias"} seguidos sem sintoma agora</span></div>
+        <div class="stat"><b>${ev.best}</b><span>maior sequência nos últimos 90 dias</span></div>
+      </div>
+    </div>`;
 
   const perSymptom = r.perSymptom.length ? r.perSymptom.map((s) => `
     <div class="tl alert">
       <span class="tl-time">${esc(s.time)}</span>
-      <span><span class="tl-what">${esc(s.type)}</span>${n > 1 ? ` <span class="muted small">${esc(fmtShort(s.date))}</span>` : ""}<br>
+      <span><span class="tl-what">${esc(s.type)}</span>${s.intensity ? ` <span class="pill alert">${esc(INT_LABEL[s.intensity])}</span>` : ""}${n > 1 ? ` <span class="muted small">${esc(fmtShort(s.date))}</span>` : ""}<br>
       <span class="small muted">${s.foods.length ? s.foods.map((f) => `${esc(foodName(f.foodId))} (${fmtDur(f.gap)} antes)`).join(", ") : "Nada registrado na janela antes deste sintoma."}</span></span>
     </div>`).join("") : "";
 
@@ -746,7 +1417,7 @@ function viewAnalysis() {
   if (n === 1) {
     const events = [
       ...mealsOn(end).filter((m) => m.time).map((m) => ({ time: m.time, html: `<span class="tl-what">${esc(m.name)}</span><br><span class="small muted">${(m.items || []).map((i) => esc(foodName(i.foodId))).join(", ") || "sem alimentos"}</span>` })),
-      ...r.symptoms.map((s) => ({ time: s.time, alert: true, html: `<span class="tl-what">${esc(s.type)}</span>` })),
+      ...r.symptoms.map((s) => ({ time: s.time, alert: true, html: `<span class="tl-what">${esc(s.type)}</span>${s.intensity ? ` <span class="pill alert">${esc(INT_LABEL[s.intensity])}</span>` : ""}` })),
     ].sort((a, b) => a.time.localeCompare(b.time));
     dayTimeline = `<div class="card"><h2>Linha do tempo do dia</h2>
       ${events.length ? `<div class="timeline">${events.map((e) => `<div class="tl ${e.alert ? "alert" : ""}"><span class="tl-time">${esc(e.time)}</span><span>${e.html}</span></div>`).join("")}</div>` : `<p class="empty">Nada registrado neste dia.</p>`}</div>`;
@@ -763,33 +1434,288 @@ function viewAnalysis() {
       <div class="stat"><b>${r.symptoms.length}</b><span>${r.symptoms.length === 1 ? "sintoma" : "sintomas"} com horário</span></div>
       <div class="stat"><b>${r.symptomDays}</b><span>${r.symptomDays === 1 ? "dia" : "dias"} com sintoma</span></div>
     </div>
+    ${r.timedMealCount && r.symptoms.length ? `<p class="muted small" style="margin:0">Em média, ${pctText(r.base)} das suas refeições vieram antes de um sintoma. Alimentos bem acima disso são os mais suspeitos.</p>` : ""}
     ${warn.length ? `<p class="notice">${warn.join(" ")}</p>` : ""}
     ${dayTimeline}
     <div class="card">
       <h2>Alimentos suspeitos</h2>
-      <span class="muted small">Quantas vezes cada alimento foi comido e quantas dessas vezes veio um sintoma em seguida.</span>
+      <span class="muted small">Toque num alimento para ver porção, sintomas e tempo até o sintoma.</span>
       ${table}
     </div>
+    ${groupsCard}
+    ${pairsCard}
+    ${symptomsCard}
+    ${factorsCard}
+    ${evCard}
     ${perSymptom ? `<div class="card"><h2>Cada sintoma e o que veio antes</h2><div class="timeline">${perSymptom}</div></div>` : ""}
     <div class="card">
-      <button class="btn" data-action="copy">Copiar resumo para a nutricionista</button>
+      <a class="btn primary block" href="#/relatorio" style="text-align:center;text-decoration:none">Relatório para a nutricionista</a>
+      <button class="btn" data-action="copy">Copiar resumo em texto</button>
       <span class="muted small">A análise mostra coincidências no tempo, não um diagnóstico.</span>
     </div>`;
 
   $view.oninput = null;
   $view.onchange = (e) => { if (e.target.id === "an-end") { analysis.end = e.target.value || null; render(); } };
   $view.onclick = async (e) => {
+    const bar = e.target.closest(".vbar");
+    if (bar) return toast(bar.dataset.tip);
     const el = e.target.closest("[data-action]");
     if (!el) return;
     if (el.dataset.action === "chip") { analysis.days = el.dataset.value; LS.set("da_period", analysis.days); render(); }
     if (el.dataset.action === "copy") {
-      const lines = [`Diário alimentar · ${rangeText}`, `Janela: ${r.winText} do sintoma`, `${r.mealCount} refeições, ${r.symptoms.length} sintomas com horário`, ""];
-      for (const x of r.ranking.filter((x) => x.before)) lines.push(`- ${foodName(x.foodId)}: comido ${x.eaten}x, ${x.before}x antes de sintoma (${Math.round(x.pct * 100)}%)${x.gap != null ? `, intervalo médio ${fmtDur(x.gap)}` : ""}`);
-      lines.push("", "Sintomas:");
-      for (const s of r.perSymptom) lines.push(`- ${fmtShort(s.date)} ${s.time} ${s.type}: ${s.foods.map((f) => foodName(f.foodId)).join(", ") || "nada antes"}`);
-      try { await navigator.clipboard.writeText(lines.join("\n")); toast("Resumo copiado"); }
+      try { await navigator.clipboard.writeText(summaryText(r, rangeText)); toast("Resumo copiado"); }
       catch { toast("Não foi possível copiar"); }
     }
+  };
+}
+
+function summaryText(r, rangeText) {
+  const lines = [`Diário alimentar · ${rangeText}`, `Janela: ${r.winText} do sintoma`, `${r.mealCount} refeições, ${r.symptoms.length} sintomas com horário`, `Média: ${pctText(r.base)} das refeições antes de sintoma`, ""];
+  lines.push("Alimentos:");
+  for (const x of r.ranking.filter((x) => x.before)) lines.push(`- ${foodName(x.key)}: comido ${x.eaten}x, ${x.before}x antes de sintoma (${pctText(x.pct)}${x.lift != null ? `, ${fmtNum(x.lift)}x a média` : ""})${typicalGap(x) ? `, geralmente ${typicalGap(x)} depois` : ""}`);
+  if (r.groupRanking.length) {
+    lines.push("", "Grupos:");
+    for (const g of r.groupRanking) lines.push(`- ${g.key}: ${g.eaten} refeições, ${g.before}x antes de sintoma (${pctText(g.pct)})`);
+  }
+  if (r.pairRanking.length) {
+    lines.push("", "Combinações:");
+    for (const p of r.pairRanking) lines.push(`- ${foodName(p.key[0])} + ${foodName(p.key[1])}: juntos ${p.eaten}x, ${p.before}x antes de sintoma`);
+  }
+  lines.push("", "Sintomas:");
+  for (const s of r.perSymptom) lines.push(`- ${fmtShort(s.date)} ${s.time} ${s.type}${s.intensity ? ` (${INT_LABEL[s.intensity].toLowerCase()})` : ""}: ${[...new Set(s.foods.map((f) => foodName(f.foodId)))].join(", ") || "nada antes"}`);
+  return lines.join("\n");
+}
+
+/* ---------- Relatório para a nutricionista (para imprimir ou salvar em PDF) ---------- */
+
+function viewReport() {
+  setChrome({ title: "Relatório", back: "#/analise", tab: "analise" });
+  const end = analysis.end || today();
+  const n = Number(analysis.days);
+  const start = addDays(end, -(n - 1));
+  const r = analyze(start, end);
+  const ev = evolution(end);
+  const rangeText = n === 1 ? fmtLong(end) : `${fmtShort(start)} a ${fmtShort(end)}`;
+  const suspects = r.ranking.filter((x) => x.before);
+
+  const mealDays = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    const ms = mealsOn(d), day = getDay(d);
+    if (ms.length || hasSymptoms(day)) mealDays.push({ d, ms, day });
+  }
+
+  $view.innerHTML = `
+    <div class="no-print row">
+      <button class="btn primary" data-action="print">Imprimir ou salvar PDF</button>
+      <button class="btn" data-action="copy">Copiar em texto</button>
+    </div>
+    <p class="muted small no-print" style="margin:0">No iPhone: toque em Imprimir, depois em Compartilhar para salvar como PDF ou enviar.</p>
+    <article class="report card">
+      <header>
+        <h1>Diário alimentar</h1>
+        <p class="muted">${esc(cap(rangeText))} · gerado em ${esc(fmtShort(today()))}<br>
+          Janela da análise: ${esc(r.winText)} do sintoma</p>
+      </header>
+
+      <section><h2>Resumo</h2>
+        <ul>
+          <li>${plural(r.mealCount, "refeição registrada", "refeições registradas")}, ${plural(r.symptoms.length, "sintoma com horário", "sintomas com horário")}, ${plural(r.symptomDays, "dia com sintoma", "dias com sintoma")}.</li>
+          ${r.timedMealCount && r.symptoms.length ? `<li>Em média, ${pctText(r.base)} das refeições vieram antes de um sintoma.</li>` : ""}
+          ${Object.keys(r.typeCount).length ? `<li>Sintomas: ${esc(typesText(r.typeCount))}.</li>` : ""}
+          <li>Sequência atual sem sintomas: ${plural(ev.streak, "dia", "dias")} (maior nos últimos 90 dias: ${ev.best}).</li>
+        </ul>
+      </section>
+
+      ${suspects.length ? `<section><h2>Alimentos que vieram antes de sintomas</h2>
+        ${suspects.map((x) => `<div class="report-item">
+          <p><b>${esc(foodName(x.key))}</b>${get(x.key)?.groups?.length ? ` <span class="muted">(${esc(groupsText(get(x.key)))})</span>` : ""}</p>
+          <p>Comido ${x.eaten}×, ${x.before}× antes de sintoma (${pctText(x.pct)})${x.lift != null ? `, ${fmtNum(x.lift)}× a média` : ""}${typicalGap(x) ? ` · geralmente ${esc(typicalGap(x))} depois` : ""}</p>
+          <p class="muted">${esc(typesText(x.types))}${x.intensity ? ` · intensidade média ${intText(x.intensity)}` : ""}${portionText(x, get(x.key)) ? ` · porção ${esc(portionText(x, get(x.key)))}` : ""}</p>
+        </div>`).join("")}</section>` : ""}
+
+      ${r.groupRanking.length ? `<section><h2>Por grupo de alimento</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Grupo</th><th class="n">Refeições</th><th class="n">Antes de sintoma</th><th class="n">vs. média</th></tr></thead>
+          <tbody>${r.groupRanking.map((g) => `<tr><td>${esc(g.key)}</td><td class="n">${g.eaten}</td><td class="n">${g.before}× (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
+        </table></div></section>` : ""}
+
+      ${r.pairRanking.length ? `<section><h2>Combinações</h2><ul>
+        ${r.pairRanking.map((p) => `<li>${esc(foodName(p.key[0]))} + ${esc(foodName(p.key[1]))}: juntos ${p.eaten}×, ${p.before}× antes de sintoma (${pctText(p.pct)})</li>`).join("")}</ul></section>` : ""}
+
+      ${r.factors.length ? `<section><h2>Outros fatores</h2><ul>
+        ${r.factors.map((f) => `<li>${esc(f.label)} ${f.rows.filter((x) => x.n).map((x) => `${esc(x.text)}: sintoma em ${x.sym} de ${plural(x.n, "dia", "dias")}`).join(" · ")}</li>`).join("")}</ul></section>` : ""}
+
+      ${r.perSymptom.length ? `<section><h2>Sintomas e o que veio antes</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Quando</th><th>Sintoma</th><th>Comido antes</th></tr></thead>
+          <tbody>${r.perSymptom.map((s) => `<tr><td class="nowrap">${esc(fmtShort(s.date))} ${esc(s.time)}</td><td>${esc(s.type)}${s.intensity ? `<br><span class="muted small">${esc(INT_LABEL[s.intensity])}</span>` : ""}</td>
+            <td>${s.foods.length ? s.foods.map((f) => `${esc(foodName(f.foodId))} (${fmtDur(f.gap)})`).join(", ") : "–"}</td></tr>`).join("")}</tbody>
+        </table></div></section>` : ""}
+
+      ${mealDays.length ? `<section><h2>Registro do período</h2>
+        ${mealDays.map(({ d, ms, day }) => `<div class="report-day"><h3>${esc(cap(fmtLong(d)))}${hasSymptoms(day) ? ' <span class="pill alert">sintoma</span>' : ""}</h3>
+          ${ms.map((m) => `<p><b>${esc(m.time || "--:--")} ${esc(m.name || "Refeição")}</b> · ${(m.items || []).map((it) => esc(`${foodName(it.foodId)} ${qtyText(it, get(it.foodId))}`.trim())).join(", ") || "sem alimentos"}${m.totalWeight || mealTotals(m).grams ? ` <span class="muted">(${esc(totalText(m))})</span>` : ""}</p>`).join("")}
+          ${(day.symptoms || []).filter((s) => s.time).map((s) => `<p class="alert-text">${esc(s.time)} ${esc(s.type)}${s.intensity ? ` (${esc(INT_LABEL[s.intensity].toLowerCase())})` : ""}</p>`).join("")}
+          ${day.giNote ? `<p class="muted">${esc(day.giNote)}</p>` : ""}
+        </div>`).join("")}</section>` : ""}
+
+      <p class="muted small">A análise mostra coincidências no tempo entre o que foi comido e os sintomas, não um diagnóstico.</p>
+    </article>`;
+
+  $view.oninput = null;
+  $view.onchange = null;
+  $view.onclick = async (e) => {
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    if (el.dataset.action === "print") window.print();
+    if (el.dataset.action === "copy") {
+      try { await navigator.clipboard.writeText(summaryText(r, rangeText)); toast("Resumo copiado"); }
+      catch { toast("Não foi possível copiar"); }
+    }
+  };
+}
+
+/* ---------- Notificações ---------- */
+
+const DAY_LETTERS = ["D", "S", "T", "Q", "Q", "S", "S"];
+const DAY_NAMES = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+// Os horários ficam num registro sincronizado; o servidor lê de lá para saber quando avisar.
+const reminders = () => get("reminders")?.list || [];
+const saveReminders = (list) =>
+  put("settings", "reminders", { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo", list });
+
+const DENIED_HELP = "As notificações estão bloqueadas neste iPhone. Para liberar: abra os <b>Ajustes</b> do iPhone → <b>Notificações</b> → <b>Diário</b> → ative <b>Permitir Notificações</b>. Depois volte aqui.";
+const UNSUPPORTED_HELP = "Para receber notificações, abra o app pelo ícone da Tela de Início (no Safari: Compartilhar → Adicionar à Tela de Início).";
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + password },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+const b64uToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  return (await navigator.serviceWorker.ready).pushManager.getSubscription();
+}
+
+// Inscreve este aparelho no servidor (a permissão já precisa estar concedida).
+async function subscribeDevice() {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    const { key } = await api("/api/push/key");
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+  }
+  await api("/api/push/subscribe", sub.toJSON());
+}
+
+// Pede a permissão do iPhone (tem que vir direto de um toque) e inscreve o aparelho.
+async function enableNotifications() {
+  if (!pushSupported()) return "unsupported";
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") return perm;
+  await subscribeDevice();
+  if (!reminders().length) saveReminders([{ id: uid(), time: "21:00", days: ALL_DAYS }]);
+  return "granted";
+}
+
+function notifCard() {
+  const list = reminders().slice().sort((a, b) => a.time.localeCompare(b.time));
+  return `<div class="card">
+    <h2>Notificações</h2>
+    <div id="notif-status"><span class="muted small">Verificando…</span></div>
+    <span class="q-label small">Horários dos lembretes</span>
+    ${list.length ? list.map((r) => `
+      <div class="reminder">
+        ${timeWheel("r:" + r.id, r.time)}
+        <div class="chips rem-days">${DAY_LETTERS.map((l, i) => `<button type="button" class="chip ${(r.days || ALL_DAYS).includes(i) ? "on" : ""}" data-action="rem-day" data-id="${r.id}" data-day="${i}" aria-label="${DAY_NAMES[i]}">${l}</button>`).join("")}</div>
+        <button class="icon-btn" data-action="rem-del" data-id="${r.id}" aria-label="Apagar horário">×</button>
+      </div>`).join("") : `<p class="muted small" style="margin:0">Nenhum horário ainda.</p>`}
+    <button class="btn small" data-action="rem-add">+ Adicionar horário</button>
+    <span class="muted small">Os dias marcados em verde são os dias em que o lembrete toca. A mensagem é sorteada entre 5 frases a cada lembrete.</span>
+  </div>`;
+}
+
+async function drawNotifStatus() {
+  const el = document.getElementById("notif-status");
+  if (!el) return;
+  let html;
+  if (!pushSupported()) html = `<span class="small">${UNSUPPORTED_HELP}</span>`;
+  else if (Notification.permission === "denied") html = `<p class="notice" style="margin:0">${DENIED_HELP}</p>`;
+  else {
+    const sub = await currentSubscription().catch(() => null);
+    html = sub && Notification.permission === "granted"
+      ? `<div class="spread"><span class="small">✅ Ativadas neste aparelho</span>
+          <span class="row"><button class="btn small" data-action="notif-test">Enviar teste</button><button class="btn small" data-action="notif-off">Desativar</button></span></div>`
+      : `<button class="btn primary block" data-action="notif-on">🔔 Ativar notificações</button>`;
+  }
+  if (el.isConnected) el.innerHTML = html;
+}
+
+// Cliques do card de notificações (chamado pela tela de Ajustes). Devolve true se tratou.
+async function notifClick(el) {
+  const a = el.dataset.action;
+  if (a === "notif-on") {
+    el.disabled = true;
+    const r = await enableNotifications().catch(() => "error");
+    if (r === "granted") { toast("Notificações ativadas"); render(); }
+    else if (r === "denied") drawNotifStatus();
+    else { el.disabled = false; toast("Não foi possível ativar agora"); }
+  } else if (a === "notif-test") {
+    try { await api("/api/push/test", {}); toast("Teste enviado, deve chegar em instantes"); } catch { toast("Não foi possível enviar o teste"); }
+  } else if (a === "notif-off") {
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) { await api("/api/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+    toast("Notificações desativadas neste aparelho"); drawNotifStatus();
+  } else if (a === "rem-add") {
+    saveReminders([...reminders(), { id: uid(), time: "12:00", days: ALL_DAYS }]); render();
+  } else if (a === "rem-del") {
+    saveReminders(reminders().filter((r) => r.id !== el.dataset.id)); render();
+  } else if (a === "rem-day") {
+    const day = Number(el.dataset.day);
+    saveReminders(reminders().map((r) => {
+      if (r.id !== el.dataset.id) return r;
+      const days = new Set(r.days || ALL_DAYS);
+      days.has(day) ? days.delete(day) : days.add(day);
+      return { ...r, days: [...days].sort() };
+    }));
+    el.classList.toggle("on");
+  } else return false;
+  return true;
+}
+
+// Popup ao abrir o app: convida a ativar (ou explica como liberar, se foi bloqueado).
+// O iPhone não deixa um app web abrir os Ajustes direto, então o popup mostra o caminho.
+function maybeAskNotifications() {
+  if (!password || !pushSupported() || !document.getElementById("sheet").hidden) return;
+  const perm = Notification.permission;
+  if (perm === "granted") { subscribeDevice().catch(() => {}); return; } // mantém a inscrição em dia no servidor
+  const key = perm === "default" ? "da_notif_ask" : "da_notif_denied";
+  if (Date.now() - LS.get(key, 0) < (perm === "default" ? 3 : 7) * 86400000) return;
+  LS.set(key, Date.now());
+  const denied = `<h2 style="margin:0;font-size:18px">Notificações bloqueadas</h2>
+    <p class="small" style="margin:0">${DENIED_HELP}</p>
+    <button class="btn primary block" data-close>Entendi</button>`;
+  const s = openSheet(perm === "default" ? `
+    <h2 style="margin:0;font-size:18px">🔔 Ativar lembretes?</h2>
+    <p class="small" style="margin:0">O app avisa nos horários que você escolher para registrar as refeições e como foi o dia. Os horários ficam em Ajustes.</p>
+    <button class="btn primary block" data-yes>Ativar</button>
+    <button class="btn block" data-close>Agora não</button>` : denied);
+  s.onclick = async (e) => {
+    if (e.target.closest("[data-close]")) return closeSheet();
+    if (!e.target.closest("[data-yes]")) return;
+    const r = await enableNotifications().catch(() => "error");
+    if (r === "granted") { closeSheet(); toast("Notificações ativadas. Ajuste os horários em Ajustes."); }
+    else if (r === "denied") s.innerHTML = denied;
+    else { closeSheet(); toast("Não foi possível ativar agora"); }
   };
 }
 
@@ -800,6 +1726,7 @@ function viewSettings() {
   const st = settings();
   const pending = Object.values(records).filter((r) => r.dirty).length;
   $view.innerHTML = `
+    ${notifCard()}
     <div class="card">
       <h2>Janela da análise</h2>
       <span class="muted small">Um alimento conta como suspeito quando foi comido dentro deste intervalo antes do sintoma.</span>
@@ -822,6 +1749,11 @@ function viewSettings() {
       <h2>Instalar no iPhone</h2>
       <span class="small">No Safari, toque em Compartilhar e depois em <b>Adicionar à Tela de Início</b>. O app passa a abrir em tela cheia, com ícone próprio.</span>
     </div>
+    <div class="card">
+      <h2>Versão do app</h2>
+      <span class="muted small">Versão ${esc(APP_VERSION)}. O app se atualiza sozinho quando é aberto; se algo novo não aparecer, toque abaixo. Seus registros não são apagados.</span>
+      <button class="btn" data-action="update">Atualizar app</button>
+    </div>
     <button class="btn danger" data-action="logout">Sair deste aparelho</button>`;
 
   $view.oninput = null;
@@ -834,12 +1766,18 @@ function viewSettings() {
       toast("Janela salva");
     }
   };
+  drawNotifStatus();
+  initWheels($view, (key, time) => {
+    if (key.startsWith("r:")) saveReminders(reminders().map((r) => ("r:" + r.id === key ? { ...r, time } : r)));
+  });
   let confirmOut = false;
   $view.onclick = async (e) => {
     const el = e.target.closest("[data-action]");
     if (!el) return;
+    if (await notifClick(el)) return;
     if (el.dataset.action === "sync") { await sync(); render(); }
     if (el.dataset.action === "export") exportData();
+    if (el.dataset.action === "update") { el.textContent = "Atualizando…"; forceUpdate(); }
     if (el.dataset.action === "logout") {
       if (!confirmOut) { confirmOut = true; el.textContent = "Toque de novo para sair (os dados não enviados serão perdidos)"; return; }
       LS.del("da_pw"); LS.del("da_records"); LS.del("da_cursor");
@@ -878,6 +1816,7 @@ function render() {
     case "dia": return /^\d{4}-\d{2}-\d{2}$/.test(arg) ? viewDay(arg) : viewCalendar();
     case "refeicao": return viewMeal(decodeURIComponent(arg || ""));
     case "analise": return viewAnalysis();
+    case "relatorio": return viewReport();
     case "alimentos": return viewFoods();
     case "ajustes": return viewSettings();
     default: return viewCalendar();
@@ -886,9 +1825,11 @@ function render() {
 
 // Calendário: navegação de mês e abrir dia (os demais cliques são de cada tela).
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-action=month],[data-action=open-day]");
+  const el = e.target.closest("[data-action=month],[data-action=open-day],[data-action=week],[data-action=cal-mode]");
   if (!el || !$view.contains(el)) return;
   if (el.dataset.action === "open-day") { location.hash = "#/dia/" + el.dataset.date; return; }
+  if (el.dataset.action === "cal-mode") { calMode = el.dataset.mode; LS.set("da_cal_mode", calMode); render(); return; }
+  if (el.dataset.action === "week") { calWeek = addDays(calWeek || weekStart(today()), Number(el.dataset.delta)); render(); return; }
   const [y, m] = calMonth;
   const d = new Date(y, m + Number(el.dataset.delta), 1);
   calMonth = [d.getFullYear(), d.getMonth()];
@@ -896,11 +1837,47 @@ document.addEventListener("click", (e) => {
 });
 
 window.addEventListener("hashchange", render);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sync(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { sync(); checkUpdate(); } });
 window.addEventListener("online", () => sync());
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+/* ---------- Atualização ---------- */
+
+// No iPhone o app instalado volta do segundo plano sem recarregar, então ele mesmo confere
+// se há versão nova publicada e recarrega (os dados ficam no aparelho e na nuvem).
+async function checkUpdate() {
+  if (APP_VERSION === "dev") return;
+  try {
+    const res = await fetch("/version.json", { cache: "no-store" });
+    const { version } = await res.json();
+    if (!version || version === APP_VERSION || isTyping() || !document.getElementById("sheet").hidden) return;
+    // Uma tentativa por versão; se a recarga não trouxer o código novo, limpa as telas guardadas.
+    let tried = null;
+    try { tried = sessionStorage.getItem("da_update"); sessionStorage.setItem("da_update", version); } catch {}
+    if (tried === version) return forceUpdateOnce(version);
+    location.reload();
+  } catch { /* sem internet: tenta na próxima vez */ }
+}
+
+function forceUpdateOnce(version) {
+  let done = null;
+  try { done = sessionStorage.getItem("da_update_forced"); sessionStorage.setItem("da_update_forced", version); } catch {}
+  if (done !== version) forceUpdate();
+}
+
+// Botão em Ajustes: limpa as telas guardadas e baixa tudo de novo. Não apaga os registros.
+async function forceUpdate() {
+  try {
+    // Atualiza o service worker sem removê-lo: removê-lo cancelaria as notificações.
+    for (const reg of (await navigator.serviceWorker?.getRegistrations()) || []) await reg.update();
+    for (const key of (await caches?.keys()) || []) await caches.delete(key);
+  } catch {}
+  location.reload();
+}
+
 if (password) setSync("Salvo no aparelho");
 render();
 sync();
+checkUpdate();
+setTimeout(maybeAskNotifications, 2500);

@@ -10,3 +10,10 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "diario-alimentar"
 database_id = "71077e5c-b54a-443e-888a-08220988e06c"
+
+[ai]
+binding = "AI"
+
+# A cada minuto: lembretes de notificação. Segunda às 9h UTC: nota de saúde dos alimentos novos.
+[triggers]
+crons = ["* * * * *", "0 9 * * 1"]
