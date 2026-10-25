@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025004738"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025135556"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -938,6 +938,9 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("scroll", fitSheet);
 }
 
+// "Comeu o alimento 2 vezes. Teve sintoma 1 vez após comer."
+const eatenText = (x) => `Comeu o alimento ${plural(x.eaten, "vez", "vezes")}. Teve sintoma ${plural(x.before, "vez", "vezes")} após comer.`;
+
 // "massinha de creme e café com leite" ou "arroz, feijão" viram um alimento por pedaço.
 const parts = (text) => text.split(/\s*,\s*|\s+e\s+/i).map((x) => x.trim()).filter(Boolean);
 
@@ -1537,7 +1540,7 @@ function foodRow(x) {
       <div class="spread"><span class="rank-name">${esc(foodName(x.key))}</span>
         <span class="num ${x.pct >= 0.5 && x.eaten >= 3 ? "pill alert" : "muted"}">${pctText(x.pct)}</span></div>
       <div class="bar"><span style="width:${pctText(x.pct)}"></span></div>
-      <span class="small muted">Comido ${x.eaten}×, ${x.before}× antes de sintoma ${liftPill(x)}${x.eaten < 3 ? ' <span class="pill">poucos dados</span>' : ""}</span>
+      <span class="small muted">${eatenText(x)} ${liftPill(x)}${x.eaten < 3 ? ' <span class="pill">poucos dados</span>' : ""}</span>
     </summary>
     <div class="rank-more">
       ${f?.groups?.length ? `<div><b>Grupos:</b> ${esc(groupsText(f))}</div>` : ""}
@@ -1691,7 +1694,7 @@ function viewAnalysis() {
 function summaryText(r, rangeText) {
   const lines = [`Diário alimentar · ${rangeText}`, `Janela: ${r.winText} do sintoma`, `${r.mealCount} refeições, ${r.symptoms.length} sintomas com horário`, `Média: ${pctText(r.base)} das refeições antes de sintoma`, ""];
   lines.push("Alimentos:");
-  for (const x of r.ranking.filter((x) => x.before)) lines.push(`- ${foodName(x.key)}: comido ${x.eaten}x, ${x.before}x antes de sintoma (${pctText(x.pct)}${x.lift != null ? `, ${fmtNum(x.lift)}x a média` : ""})${typicalGap(x) ? `, geralmente ${typicalGap(x)} depois` : ""}`);
+  for (const x of r.ranking.filter((x) => x.before)) lines.push(`- ${foodName(x.key)}: ${eatenText(x)} (${pctText(x.pct)}${x.lift != null ? `, ${fmtNum(x.lift)}x a média` : ""})${typicalGap(x) ? `, geralmente ${typicalGap(x)} depois` : ""}`);
   if (r.groupRanking.length) {
     lines.push("", "Grupos:");
     for (const g of r.groupRanking) lines.push(`- ${g.key}: ${g.eaten} refeições, ${g.before}x antes de sintoma (${pctText(g.pct)})`);
@@ -1754,7 +1757,7 @@ function viewReport() {
       ${suspects.length ? `<section><h2>Alimentos que vieram antes de sintomas</h2>
         ${suspects.map((x) => `<div class="report-item">
           <p><b>${esc(foodName(x.key))}</b>${get(x.key)?.groups?.length ? ` <span class="muted">(${esc(groupsText(get(x.key)))})</span>` : ""}</p>
-          <p>Comido ${x.eaten}×, ${x.before}× antes de sintoma (${pctText(x.pct)})${x.lift != null ? `, ${fmtNum(x.lift)}× a média` : ""}${typicalGap(x) ? ` · geralmente ${esc(typicalGap(x))} depois` : ""}</p>
+          <p>${eatenText(x)} (${pctText(x.pct)})${x.lift != null ? `, ${fmtNum(x.lift)}× a média` : ""}${typicalGap(x) ? ` · geralmente ${esc(typicalGap(x))} depois` : ""}</p>
           <p class="muted">${esc(typesText(x.types))}${x.intensity ? ` · intensidade média ${intText(x.intensity)}` : ""}${portionText(x, get(x.key)) ? ` · porção ${esc(portionText(x, get(x.key)))}` : ""}</p>
         </div>`).join("")}</section>` : ""}
 
