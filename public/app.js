@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025140751"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025230432"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -358,12 +358,44 @@ function monthBadges(m) {
 
 // Pede ao servidor a nota dos alimentos sem nota (o agendamento semanal faz o mesmo para o que sobrar).
 let rating = false;
-const unratedFoods = () => all("food").filter((f) => !HEALTH[f.health] || !GUT[f.gut]);
+const needsGroups = (f) => !(f.groups || []).length && !f.groupsManual && !f.groupsChecked;
+const unratedFoods = () => all("food").filter((f) => !HEALTH[f.health] || !GUT[f.gut] || needsGroups(f));
+
+// Depois de cadastrar na refeição: classifica e avisa quando terminar.
+async function classifyNew(ids) {
+  const n = await rateFoods(ids.map(get).filter(Boolean));
+  const names = ids.map(get).filter(Boolean);
+  if (!n) return;
+  if (names.length === 1) {
+    const f = names[0];
+    toast(gutWarning(f.id) || `${f.name} classificado: ${[HEALTH[f.health]?.emoji, GUT[gutOf(f)]?.emoji].filter(Boolean).join(" ")}${f.groups?.length ? ` · ${f.groups.join(", ")}` : ""}`);
+  } else toast(`${plural(names.length, "alimento classificado", "alimentos classificados")} automaticamente`);
+  if (document.getElementById("sheet").hidden && !isTyping()) render();
+}
+
+async function rateGroups(foods) {
+  if (!foods.length) return 0;
+  try {
+    const { groups } = await fetchGroups(foods);
+    let n = 0;
+    for (const f0 of foods) {
+      const f = get(f0.id);
+      if (!f || !needsGroups(f) || !Array.isArray(groups[f.name])) continue;
+      const { id, ...data } = f;
+      put("food", id, { ...data, groups: groups[f.name], groupsManual: false, groupsChecked: true });
+      n++;
+    }
+    return n;
+  } catch { return 0; }
+}
+
 async function rateFoods(foods = unratedFoods()) {
   if (!foods.length || rating || !password || !navigator.onLine) return 0;
   rating = true;
   try {
-    const g = await rateGut(foods.filter((f) => !GUT[f.gut]));
+    const gr = await rateGroups(foods.filter(needsGroups));
+    foods = foods.map((f) => get(f.id)).filter(Boolean);
+    const g = Math.max(gr, await rateGut(foods.filter((f) => !GUT[f.gut])));
     foods = foods.filter((f) => !HEALTH[f.health]);
     if (!foods.length) return g;
     const examples = all("food").filter((f) => f.healthManual && HEALTH[f.health]).slice(-40)
@@ -1006,17 +1038,17 @@ function openFoodSheet(onPick) {
 
   const fail = (msg) => { $("#fs-err").textContent = msg; $("#fs-err").hidden = false; };
   // Um ou mais alimentos novos: cada um passa pela janela de tipo, um de cada vez.
+  // Alimentos novos: cadastra na hora e classifica sozinho em segundo plano (grupos, saúde e barriga).
   function addNew(names, data, qtyFor, done) {
-    if (!names.length) return done();
-    const [name, ...rest] = names;
-    groupsSheet(name, (extra) => {
+    const ids = names.map((name) => {
       const id = "food:" + uid();
-      put("food", id, { ...data, name, ...extra });
+      put("food", id, { ...data, name, groups: [] });
       foods.push(get(id));
       onPick(id, qtyFor(data.mode));
-      rateFoods([get(id)]);
-      addNew(rest, data, qtyFor, done);
+      return id;
     });
+    done();
+    if (ids.length) classifyNew(ids);
   }
 
   function save() {
@@ -1036,13 +1068,8 @@ function openFoodSheet(onPick) {
     const data = { name, mode: newMode };
     const uw = parseNum($("#fs-uw").value);
     if (newMode === "unit" && uw) data.unitWeight = uw;
-    groupsSheet(name, (extra) => {
-      const id = "food:" + uid();
-      put("food", id, { ...data, ...extra });
-      closeSheet();
-      onPick(id, qty || null);
-      rateFoods([get(id)]);
-    });
+    closeSheet();
+    addNew([name], data, () => qty || null, () => {});
   }
 
   s.onclick = (e) => {
@@ -1122,32 +1149,6 @@ async function autoGroups(btn, root, name, prep) {
 const prepField = (value = "") => `
   <label class="field">Preparo ou ingredientes (opcional, ajuda o Automático)
     <input type="text" id="prep" value="${esc(value)}" placeholder="Ex.: assado, caseiro, massa de trigo, com queijo"></label>`;
-
-// Janela que aparece ao cadastrar um alimento novo, para marcar os grupos dele (opcional).
-// onDone recebe { groups, prep, groupsManual }.
-function groupsSheet(name, onDone) {
-  const s = openSheet(`
-    <div class="sheet-head"><button class="btn small" data-skip>Pular</button><h2>Tipo do alimento</h2><button class="btn small primary" data-save>Salvar</button></div>
-    <p class="muted small" style="margin:0">Marque os grupos de <b>${esc(name)}</b>, ou toque em Automático para classificar. Pode marcar mais de um, ou pular.</p>
-    ${prepField()}
-    <button class="btn" data-auto>✨ Automático</button>
-    <span class="muted small" data-auto-src></span>
-    ${groupChips()}
-    <button class="btn primary block" data-save>Salvar alimento</button>`);
-  let suggested = null;
-  const prep = () => s.querySelector("#prep").value.trim();
-  s.onclick = async (e) => {
-    const g = e.target.closest("[data-group]");
-    if (g) return g.classList.toggle("on");
-    const auto = e.target.closest("[data-auto]");
-    if (auto) { suggested = (await autoGroups(auto, s, name, prep())) || suggested; return; }
-    if (e.target.closest("[data-skip]")) return onDone({ groups: [], prep: prep(), groupsManual: false });
-    if (e.target.closest("[data-save]")) {
-      const groups = readGroups(s);
-      onDone({ groups, prep: prep(), groupsManual: manualFlag(groups, suggested, null) });
-    }
-  };
-}
 
 /* ---------- Alimentos ---------- */
 
@@ -1676,11 +1677,7 @@ function viewAnalysis() {
     ${factorsCard}
     ${evCard}
     ${perSymptom ? `<div class="card"><h2>Cada sintoma e o que veio antes</h2><div class="timeline">${perSymptom}</div></div>` : ""}
-    <div class="card">
-      <a class="btn primary block" href="#/relatorio" style="text-align:center;text-decoration:none">Relatório para a nutricionista</a>
-      <button class="btn" data-action="copy">Copiar resumo em texto</button>
-      <span class="muted small">A análise mostra coincidências no tempo, não um diagnóstico.</span>
-    </div>`;
+    <p class="muted small" style="margin:0">A análise mostra coincidências no tempo, não um diagnóstico. Para imprimir ou enviar, use a aba Relatórios.</p>`;
 
   $view.oninput = null;
   $view.onchange = (e) => { if (e.target.id === "an-end") { analysis.end = e.target.value || null; render(); } };
@@ -1690,10 +1687,6 @@ function viewAnalysis() {
     const el = e.target.closest("[data-action]");
     if (!el) return;
     if (el.dataset.action === "chip") { analysis.days = el.dataset.value; LS.set("da_period", analysis.days); render(); }
-    if (el.dataset.action === "copy") {
-      try { await navigator.clipboard.writeText(summaryText(r, rangeText)); toast("Resumo copiado"); }
-      catch { toast("Não foi possível copiar"); }
-    }
   };
 }
 
@@ -1737,7 +1730,7 @@ function registroText(mealDays, rangeText) {
 }
 
 function viewReport() {
-  setChrome({ title: "Relatório", back: "#/analise", tab: "analise" });
+  setChrome({ title: "Relatórios", tab: "relatorios" });
   const end = analysis.end || today();
   const n = Number(analysis.days);
   const start = addDays(end, -(n - 1));
@@ -1762,6 +1755,11 @@ function viewReport() {
   const full = reportMode !== "registro";
 
   $view.innerHTML = `
+    <div class="card no-print">
+      <span class="q-label small">Período</span>
+      ${chips("period", PERIODS, analysis.days)}
+      <label class="field">Até o dia<input type="date" id="rep-end" value="${end}" max="${today()}"></label>
+    </div>
     <div class="seg no-print" role="group" aria-label="Tipo de relatório">
       <button class="${full ? "on" : ""}" data-action="rep-mode" data-mode="completo" aria-pressed="${full}">COMPLETO</button>
       <button class="${full ? "" : "on"}" data-action="rep-mode" data-mode="registro" aria-pressed="${!full}">SÓ O REGISTRO</button>
@@ -1827,10 +1825,11 @@ function viewReport() {
     </article>`;
 
   $view.oninput = null;
-  $view.onchange = null;
+  $view.onchange = (e) => { if (e.target.id === "rep-end") { analysis.end = e.target.value || null; render(); } };
   $view.onclick = async (e) => {
     const el = e.target.closest("[data-action]");
     if (!el) return;
+    if (el.dataset.action === "chip") { analysis.days = el.dataset.value; LS.set("da_period", analysis.days); return render(); }
     if (el.dataset.action === "rep-mode") { reportMode = el.dataset.mode; LS.set("da_report_mode", reportMode); return render(); }
     if (el.dataset.action === "print") window.print();
     if (el.dataset.action === "copy") {

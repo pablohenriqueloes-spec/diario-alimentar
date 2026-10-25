@@ -79,14 +79,14 @@ main {
   left: 0; right: 0; bottom: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: var(--surface);
   border-top: 1px solid var(--line);
   padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
 }
 .tabs a {
   text-align: center; text-decoration: none; color: var(--muted);
-  font-size: 13px; padding: 8px 4px; border-radius: 10px;
+  font-size: 12px; padding: 8px 2px; border-radius: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tabs a.on { color: var(--accent); font-weight: 650; background: var(--accent-soft); }
 
