@@ -26,3 +26,8 @@ Barriga (intestino irritado): cada alimento tem também `gut` (ok, atencao ou ga
 lactose, frutose, poliois, gordura, cafeina, alcool, gas, picante, insoluvel, soluvel), pela tabela de `src/foods.js`
 (Monash University e diretrizes ACG/NICE) e IA para o resto, na rota `/api/gut`. O mesmo cron semanal preenche.
 Gatilhos pessoais são calculados no aparelho a partir da análise dos últimos 60 dias.
+
+Personagem do dia (Friends): ao responder as 4 perguntas de "Como foi o dia", uma nota parcial (70% respostas,
+30% comida do dia) escolhe o personagem, mostrado num modal por 15 s. As fotos ficam em `public/friends/`, fora
+do Git por serem imagens dos atores; uma cópia fica nos arquivos do projeto (diario-alimentar/public/friends).
+Sem elas, o deploy publica o app sem as fotos.

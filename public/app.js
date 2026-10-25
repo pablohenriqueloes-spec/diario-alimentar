@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025230432"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025235754"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -278,6 +278,85 @@ function gutDayScore(date) {
     counts[g]++; pts += GUT[g].pts; n++;
   }
   return n ? { score: Math.round(pts / n), counts, mine: [...mine] } : null;
+}
+
+/* ---------- Personagem do dia (Friends) ---------- */
+
+// Fotos ficam em public/friends/ (fora do Git, por serem dos atores).
+const CHARACTERS = [
+  [10, "janice", "Janice", "Oh. My. God! 😱", "janice.jpg"],
+  [35, "chandler", "Chandler", "Could this day BE any worse? 🙄", "chandler.jpg"],
+  [45, "monica", "Monica", "I KNOW! Amanhã eu organizo tudo. 🧽", "monica.jpg"],
+  [55, "ross", "Ross", "PIVOT! Amanhã a gente vira o jogo. 🛋️", "ross.jpg"],
+  [65, "phoebe", "Phoebe", "Smelly Cat, Smelly Cat… dia bom! 🎸", "phoebe.jpg"],
+  [75, "joey", "Joey", "How you doin'? 😏", "joey.jpg"],
+  [101, "rachel", "Rachel", "Dia perfeito, tipo o cabelo da Rachel! 💁‍♀️", "rachel.gif"],
+].map(([max, key, name, phrase, img]) => ({ max, key, name, phrase, img: "friends/" + img }));
+const characterFor = (score) => CHARACTERS.find((c) => score < c.max);
+const CHAR = Object.fromEntries(CHARACTERS.map((c) => [c.key, c]));
+const Q_MOOD = { bem: 30, regular: 15, mal: 0 };
+const Q_SYMPTOM = { leve: 15, moderado: 8, forte: 0 };
+
+// Nota parcial: 70% das 4 perguntas de "Como foi o dia" + 30% da comida do dia (saúde e barriga).
+// Só existe quando as 4 perguntas foram respondidas.
+function partialScore(date) {
+  const d = getDay(date);
+  if (!d.mood || !d.sleep || !d.exercise || !d.gi) return null;
+  let sym = 25;
+  if (d.gi === "sim") {
+    const ints = (d.symptoms || []).map((s) => Q_SYMPTOM[s.intensity]).filter((v) => v != null);
+    sym = ints.length ? Math.min(...ints) : 8;
+  }
+  const q = Q_MOOD[d.mood] + (d.sleep === "sim" ? 25 : 0) + (d.exercise === "sim" ? 20 : 0) + sym;
+  const foods = [dayScore(date)?.score, gutDayScore(date)?.score].filter((v) => v != null);
+  const food = foods.length ? avg(foods) : null;
+  const score = Math.round(food == null ? q : q * 0.7 + food * 0.3);
+  return { score, q, food, char: characterFor(score) };
+}
+
+let charTimer = null;
+function showCharacter(date, p) {
+  const box = document.getElementById("char-modal");
+  const c = p.char;
+  box.innerHTML = `
+    <div class="char-card" role="dialog" aria-modal="true" aria-label="${esc(c.name)}">
+      <button class="char-close" data-close-char aria-label="Fechar">✕</button>
+      <img src="${c.img}" alt="${esc(c.name)}">
+      <div class="char-body">
+        <span class="char-score num">${p.score}</span>
+        <b class="char-name">Hoje você foi ${esc(c.name)}!</b>
+        <span class="char-phrase">${esc(c.phrase)}</span>
+        <span class="muted small">Nota parcial de ${esc(fmtShort(date))}: perguntas ${Math.round(p.q)}${p.food != null ? ` · comida ${Math.round(p.food)}` : ""}</span>
+      </div>
+      <i class="char-timer"></i>
+    </div>`;
+  box.hidden = false;
+  clearTimeout(charTimer);
+  charTimer = setTimeout(hideCharacter, 15000);
+}
+function hideCharacter() {
+  clearTimeout(charTimer);
+  const box = document.getElementById("char-modal");
+  box.hidden = true; box.innerHTML = "";
+}
+document.getElementById("char-modal").addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-char]") || e.target.id === "char-modal") hideCharacter();
+});
+
+// Depois de responder: mostra o personagem quando as 4 respostas estão completas e ele mudou.
+function maybeShowCharacter(date) {
+  const p = partialScore(date);
+  const dd = getDay(date);
+  if (!p || dd.charShown === p.char.key) return;
+  dd.charShown = p.char.key; saveDay(dd);
+  showCharacter(date, p);
+}
+
+// Personagens do mês, do mais frequente para o menos.
+function monthCharacters(start, end) {
+  const n = {};
+  for (let s = start; s <= end && s <= today(); s = addDays(s, 1)) { const p = partialScore(s); if (p) n[p.char.key] = (n[p.char.key] || 0) + 1; }
+  return Object.entries(n).sort((a, b) => b[1] - a[1]);
 }
 
 // Aviso discreto ao pôr na refeição um alimento que costuma ser gatilho.
@@ -587,7 +666,8 @@ function viewCalendar() {
           <span class="wk-n">${parseYmd(s).getDate()}</span>
           <span class="dots">${dotsFor(s)}</span>
           <span class="wk-meals">${n ? `${n} ref.` : ""}</span>
-          <span class="wk-score">${(() => { const d = dayScore(s); return d?.score != null ? level(d.score).emoji : ""; })()}</span></button>`;
+          <span class="wk-score">${(() => { const d = dayScore(s); return d?.score != null ? level(d.score).emoji : ""; })()}</span>
+          ${(() => { const p = partialScore(s); return p ? `<img class="wk-char" src="${p.char.img}" alt="${esc(p.char.name)}" title="${esc(p.char.name)}">` : ""; })()}</button>`;
       }).join("")}</div>`;
   } else {
     let cells = "";
@@ -673,6 +753,8 @@ function scoreCard(t, ws, mStart, mEnd) {
       ${head ? `<p class="sc-msg">${esc(head.who)}: ${esc(level(head.s, head.key).msg)}</p>` : `<p class="sc-msg muted">Registre as refeições de hoje para ganhar sua primeira nota 🍽️</p>`}
       ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}${mealBonus(d.meals) ? ` · +${mealBonus(d.meals)} de constância` : ""}</span>` : ""}
       ${g ? `<span class="small">Barriga hoje: ${gutLevel(g.score, "g" + t).msg} · 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
+      ${(() => { const mc = monthCharacters(mStart, mEnd); return mc.length ? `<div class="char-month"><span class="small">🎬 Em ${esc(monthShort(mStart).toLowerCase())} você foi:</span>
+        <div class="char-list">${mc.map(([k, n]) => `<span class="char-chip"><img src="${CHAR[k].img}" alt="">${esc(CHAR[k].name)} ${n}×</span>`).join("")}</div></div>` : ""; })()}
       ${st >= 2 ? `<span class="small sc-streak">🔥 ${st} dias seguidos registrando</span>` : ""}
       ${badges.length ? `<div class="sc-badges">${badges.map(([e, name, why]) => `<span class="sc-badge" title="${esc(why)}">${e} ${esc(name)}</span>`).join("")}</div>` : ""}
       ${unrated ? `<div class="spread"><span class="muted small">${plural(unrated, "alimento ainda sem nota", "alimentos ainda sem nota")} (classificados toda segunda)</span><button class="btn small" data-action="rate-foods">Classificar agora</button></div>` : ""}
@@ -737,12 +819,14 @@ function viewDay(date) {
         `<button type="button" class="chip alert ${s.intensity === v ? "on" : ""}" data-action="sint" data-id="${s.id}" data-value="${v}">${label}</button>`).join("")}</div>
     </div>`).join("");
 
-  const ds = dayScore(date);
+  const ds = dayScore(date), pc = partialScore(date);
   $view.innerHTML = `
     <div class="spread">
       <a class="btn small" href="#/dia/${addDays(date, -1)}">‹ ${esc(fmtShort(addDays(date, -1)))}</a>
       <a class="btn small" href="#/dia/${addDays(date, 1)}">${esc(fmtShort(addDays(date, 1)))} ›</a>
     </div>
+    ${pc ? `<button class="card sc-day char-mini" data-action="show-char"><img src="${pc.char.img}" alt=""><span><b class="num">${esc(pc.char.name)} · ${pc.score}</b><br><span class="small">${esc(pc.char.phrase)}</span></span></button>`
+      : `<p class="muted small" style="margin:0">Responda as 4 perguntas de "Como foi o dia" para descobrir quem você foi hoje 🎬</p>`}
     ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
       <span><b class="num">Barriga: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
@@ -809,14 +893,17 @@ function viewDay(date) {
       const f = el.dataset.field;
       dd[f] = dd[f] === el.dataset.value ? null : el.dataset.value;
       if (f === "gi" && dd.gi === "sim" && !dd.symptoms.length) dd.symptoms.push({ id: uid(), time: date === today() ? nowHHMM() : "", type: SYMPTOM_TYPES[1] });
-      saveDay(dd); render();
+      saveDay(dd); render(); maybeShowCharacter(date);
     } else if (el.dataset.action === "sint") {
       const s = dd.symptoms.find((x) => x.id === el.dataset.id);
       if (s) { s.intensity = s.intensity === el.dataset.value ? null : el.dataset.value; saveDay(dd); }
       el.parentElement.querySelectorAll("[data-action=sint]").forEach((b) => b.classList.toggle("on", b === el && !!s?.intensity));
+      maybeShowCharacter(date);
     } else if (el.dataset.action === "set-stime") {
       const s = dd.symptoms.find((x) => x.id === el.dataset.id);
       if (s) { s.time = "12:00"; saveDay(dd); render(); }
+    } else if (el.dataset.action === "show-char") {
+      const p = partialScore(date); if (p) showCharacter(date, p);
     } else if (el.dataset.action === "add-symptom") {
       dd.symptoms.push({ id: uid(), time: date === today() ? nowHHMM() : "", type: SYMPTOM_TYPES[1] });
       saveDay(dd); render();
