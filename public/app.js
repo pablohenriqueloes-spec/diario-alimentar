@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025135834"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025140359"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -939,7 +939,13 @@ if (window.visualViewport) {
 }
 
 // "Comeu o alimento 2 vezes. Teve sintoma 1 vez após comer."
-const eatenText = (x) => `Comeu o alimento ${plural(x.eaten, "vez", "vezes")}. Teve sintoma ${plural(x.before, "vez", "vezes")} após comer.`;
+const vezes = (n) => plural(n, "vez", "vezes");
+const symText = (x) => `Teve sintoma ${vezes(x.before)} após comer.`;
+const eatenText = (x) => `Comeu o alimento ${vezes(x.eaten)}. ${symText(x)}`;
+const groupText = (x) => `Comeu alimentos deste grupo ${vezes(x.eaten)}. ${symText(x)}`;
+const reasonText = (x) => `Comeu alimentos com este motivo ${vezes(x.eaten)}. ${symText(x)}`;
+const pairText = (x) => `Comeu os dois juntos ${vezes(x.eaten)}. ${symText(x)}`;
+const dayText = (x) => `${plural(x.n, "dia", "dias")} assim. Teve sintoma em ${x.sym}.`;
 
 // "massinha de creme e café com leite" ou "arroz, feijão" viram um alimento por pedaço.
 const parts = (text) => text.split(/\s*,\s*|\s+e\s+/i).map((x) => x.trim()).filter(Boolean);
@@ -1544,7 +1550,7 @@ function foodRow(x) {
     </summary>
     <div class="rank-more">
       ${f?.groups?.length ? `<div><b>Grupos:</b> ${esc(groupsText(f))}</div>` : ""}
-      ${x.lift != null ? `<div><b>Comparado à média:</b> veio antes de sintoma em ${pctText(x.pct)} das vezes; nas suas refeições em geral isso acontece em ${pctText(x.pct / x.lift)}.</div>` : ""}
+      ${x.lift != null ? `<div><b>Comparado à média:</b> teve sintoma após comer em ${pctText(x.pct)} das vezes; nas suas refeições em geral isso acontece em ${pctText(x.pct / x.lift)}.</div>` : ""}
       ${portion ? `<div><b>Porção média:</b> ${esc(portion)}</div>` : ""}
       ${x.before ? `<div><b>Sintomas que vieram depois:</b> ${esc(typesText(x.types))}${x.intensity ? ` · intensidade média ${intText(x.intensity)}` : ""}</div>
       <div><b>Tempo até o sintoma</b>${x.gap != null ? ` (média ${fmtDur(x.gap)})` : ""}</div>
@@ -1573,30 +1579,30 @@ function viewAnalysis() {
 
   const groupsCard = !hasData ? "" : r.groupRanking.length ? `
     <div class="card"><h2>Grupos de alimentos</h2>
-      <span class="muted small">Refeições com algum alimento do grupo e quantas vieram antes de sintoma.</span>
+      <span class="muted small">Quantas vezes você comeu algum alimento de cada grupo e quantas vezes teve sintoma depois.</span>
       <div class="rank">${r.groupRanking.map((g) => `
         <div class="rank-row">
           <div class="spread"><span class="rank-name">${esc(g.key)}</span><span class="num ${g.pct >= 0.5 && g.eaten >= 3 ? "pill alert" : "muted"}">${pctText(g.pct)}</span></div>
           <div class="bar"><span style="width:${pctText(g.pct)}"></span></div>
-          <span class="small muted">Em ${plural(g.eaten, "refeição", "refeições")}, ${g.before}× antes de sintoma ${liftPill(g)}${g.before ? ` · ${esc(typesText(g.types))}` : ""}</span>
+          <span class="small muted">${groupText(g)} ${liftPill(g)}${g.before ? ` · ${esc(typesText(g.types))}` : ""}</span>
         </div>`).join("")}</div></div>`
     : `<div class="card"><h2>Grupos de alimentos</h2><p class="muted small">Marque os grupos dos alimentos (fritura, FODMAP, lactose…) na aba Alimentos para ver a análise por grupo.</p></div>`;
 
   const reasonsCard = !hasData || !r.reasonRanking.length ? "" : `
     <div class="card"><h2>Motivos da barriga</h2>
-      <span class="muted small">Refeições com algum alimento de cada motivo (intestino irritado) e quantas vieram antes de sintoma.</span>
+      <span class="muted small">Quantas vezes você comeu algum alimento com cada motivo (intestino irritado) e quantas vezes teve sintoma depois.</span>
       <div class="rank">${r.reasonRanking.map((g) => `
         <div class="rank-row">
           <div class="spread"><span class="rank-name">${WHY[g.key][0]} ${esc(WHY[g.key][1])}</span><span class="num ${g.pct >= 0.5 && g.eaten >= 3 ? "pill alert" : "muted"}">${pctText(g.pct)}</span></div>
           <div class="bar"><span style="width:${pctText(g.pct)}"></span></div>
-          <span class="small muted">Em ${plural(g.eaten, "refeição", "refeições")}, ${g.before}× antes de sintoma ${liftPill(g)}${g.before ? ` · ${esc(typesText(g.types))}` : ""}</span>
+          <span class="small muted">${reasonText(g)} ${liftPill(g)}${g.before ? ` · ${esc(typesText(g.types))}` : ""}</span>
         </div>`).join("")}</div></div>`;
 
   const pairsCard = r.pairRanking.length ? `
     <div class="card"><h2>Combinações</h2>
-      <span class="muted small">Alimentos comidos juntos que vêm antes de sintoma mais do que a média (${pctText(r.base)}).</span>
+      <span class="muted small">Alimentos comidos juntos que, depois, tiveram sintoma mais vezes do que a média (${pctText(r.base)}).</span>
       ${r.pairRanking.map((p) => `<div class="rank-row"><div class="spread"><span class="rank-name">${esc(foodName(p.key[0]))} + ${esc(foodName(p.key[1]))}</span><span class="num muted">${pctText(p.pct)}</span></div>
-        <span class="small muted">Juntos ${p.eaten}×, ${p.before}× antes de sintoma ${liftPill(p)}</span></div>`).join("")}
+        <span class="small muted">${pairText(p)} ${liftPill(p)}</span></div>`).join("")}
     </div>` : "";
 
   const typeItems = Object.entries(r.typeCount).sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ label: t, value: c }));
@@ -1612,9 +1618,9 @@ function viewAnalysis() {
 
   const factorsCard = r.factors.length ? `
     <div class="card"><h2>Outros fatores do dia</h2>
-      <span class="muted small">Em quantos dias com cada resposta houve sintoma.</span>
+      <span class="muted small">Quantos dias tiveram cada resposta e em quantos deles você teve sintoma.</span>
       ${r.factors.map((f) => `<span class="q-label small">${esc(f.label)}</span>
-        ${hbars(f.rows.filter((x) => x.n).map((x) => ({ label: x.text, value: x.sym / x.n, text: `${x.sym} de ${plural(x.n, "dia", "dias")}` })), { max: 1 })}`).join("")}
+        ${hbars(f.rows.filter((x) => x.n).map((x) => ({ label: x.text, value: x.sym / x.n, text: dayText(x) })), { max: 1 })}`).join("")}
     </div>` : "";
 
   const evCard = `
@@ -1692,22 +1698,22 @@ function viewAnalysis() {
 }
 
 function summaryText(r, rangeText) {
-  const lines = [`Diário alimentar · ${rangeText}`, `Janela: ${r.winText} do sintoma`, `${r.mealCount} refeições, ${r.symptoms.length} sintomas com horário`, `Média: ${pctText(r.base)} das refeições antes de sintoma`, ""];
+  const lines = [`Diário alimentar · ${rangeText}`, `Janela: ${r.winText} do sintoma`, `${r.mealCount} refeições, ${r.symptoms.length} sintomas com horário`, `Média: teve sintoma após ${pctText(r.base)} das refeições`, ""];
   lines.push("Alimentos:");
   for (const x of r.ranking.filter((x) => x.before)) lines.push(`- ${foodName(x.key)}: ${eatenText(x)} (${pctText(x.pct)}${x.lift != null ? `, ${fmtNum(x.lift)}x a média` : ""})${typicalGap(x) ? `, geralmente ${typicalGap(x)} depois` : ""}`);
   if (r.groupRanking.length) {
     lines.push("", "Grupos:");
-    for (const g of r.groupRanking) lines.push(`- ${g.key}: ${g.eaten} refeições, ${g.before}x antes de sintoma (${pctText(g.pct)})`);
+    for (const g of r.groupRanking) lines.push(`- ${g.key}: ${groupText(g)} (${pctText(g.pct)})`);
   }
   if (r.reasonRanking.length) {
     lines.push("", "Motivos da barriga:");
-    for (const g of r.reasonRanking) lines.push(`- ${WHY[g.key][1]}: ${g.eaten} refeições, ${g.before}x antes de sintoma (${pctText(g.pct)})`);
+    for (const g of r.reasonRanking) lines.push(`- ${WHY[g.key][1]}: ${reasonText(g)} (${pctText(g.pct)})`);
   }
   const mine = all("food").filter(isTrigger);
   if (mine.length) lines.push("", "Gatilhos pessoais: " + mine.map((f) => f.name).join(", "));
   if (r.pairRanking.length) {
     lines.push("", "Combinações:");
-    for (const p of r.pairRanking) lines.push(`- ${foodName(p.key[0])} + ${foodName(p.key[1])}: juntos ${p.eaten}x, ${p.before}x antes de sintoma`);
+    for (const p of r.pairRanking) lines.push(`- ${foodName(p.key[0])} + ${foodName(p.key[1])}: ${pairText(p)}`);
   }
   lines.push("", "Sintomas:");
   for (const s of r.perSymptom) lines.push(`- ${fmtShort(s.date)} ${s.time} ${s.type}${s.intensity ? ` (${INT_LABEL[s.intensity].toLowerCase()})` : ""}: ${[...new Set(s.foods.map((f) => foodName(f.foodId)))].join(", ") || "nada antes"}`);
@@ -1783,7 +1789,7 @@ function viewReport() {
         </ul>
       </section>
 
-      ${suspects.length ? `<section><h2>Alimentos que vieram antes de sintomas</h2>
+      ${suspects.length ? `<section><h2>Alimentos com sintoma após comer</h2>
         ${suspects.map((x) => `<div class="report-item">
           <p><b>${esc(foodName(x.key))}</b>${get(x.key)?.groups?.length ? ` <span class="muted">(${esc(groupsText(get(x.key)))})</span>` : ""}</p>
           <p>${eatenText(x)} (${pctText(x.pct)})${x.lift != null ? `, ${fmtNum(x.lift)}× a média` : ""}${typicalGap(x) ? ` · geralmente ${esc(typicalGap(x))} depois` : ""}</p>
@@ -1792,23 +1798,23 @@ function viewReport() {
 
       ${r.groupRanking.length ? `<section><h2>Por grupo de alimento</h2>
         <div class="table-wrap"><table>
-          <thead><tr><th>Grupo</th><th class="n">Refeições</th><th class="n">Antes de sintoma</th><th class="n">vs. média</th></tr></thead>
-          <tbody>${r.groupRanking.map((g) => `<tr><td>${esc(g.key)}</td><td class="n">${g.eaten}</td><td class="n">${g.before}× (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
+          <thead><tr><th>Grupo</th><th class="n">Comeu</th><th class="n">Teve sintoma após comer</th><th class="n">vs. média</th></tr></thead>
+          <tbody>${r.groupRanking.map((g) => `<tr><td>${esc(g.key)}</td><td class="n">${vezes(g.eaten)}</td><td class="n">${vezes(g.before)} (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
         </table></div></section>` : ""}
 
       ${r.reasonRanking.length ? `<section><h2>Motivos da barriga (intestino irritado)</h2>
         <div class="table-wrap"><table>
-          <thead><tr><th>Motivo</th><th class="n">Refeições</th><th class="n">Antes de sintoma</th><th class="n">vs. média</th></tr></thead>
-          <tbody>${r.reasonRanking.map((g) => `<tr><td>${WHY[g.key][0]} ${esc(WHY[g.key][1])}</td><td class="n">${g.eaten}</td><td class="n">${g.before}× (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
+          <thead><tr><th>Motivo</th><th class="n">Comeu</th><th class="n">Teve sintoma após comer</th><th class="n">vs. média</th></tr></thead>
+          <tbody>${r.reasonRanking.map((g) => `<tr><td>${WHY[g.key][0]} ${esc(WHY[g.key][1])}</td><td class="n">${vezes(g.eaten)}</td><td class="n">${vezes(g.before)} (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
         </table></div></section>` : ""}
       ${(() => { const mine = all("food").filter(isTrigger); return mine.length ? `<section><h2>Gatilhos pessoais (últimos 60 dias)</h2>
         <p>${mine.map((f) => `${esc(f.name)}${whyText(f) ? ` (${esc(whyText(f))})` : ""}`).join("; ")}</p></section>` : ""; })()}
 
       ${r.pairRanking.length ? `<section><h2>Combinações</h2><ul>
-        ${r.pairRanking.map((p) => `<li>${esc(foodName(p.key[0]))} + ${esc(foodName(p.key[1]))}: juntos ${p.eaten}×, ${p.before}× antes de sintoma (${pctText(p.pct)})</li>`).join("")}</ul></section>` : ""}
+        ${r.pairRanking.map((p) => `<li>${esc(foodName(p.key[0]))} + ${esc(foodName(p.key[1]))}: ${pairText(p)} (${pctText(p.pct)})</li>`).join("")}</ul></section>` : ""}
 
       ${r.factors.length ? `<section><h2>Outros fatores</h2><ul>
-        ${r.factors.map((f) => `<li>${esc(f.label)} ${f.rows.filter((x) => x.n).map((x) => `${esc(x.text)}: sintoma em ${x.sym} de ${plural(x.n, "dia", "dias")}`).join(" · ")}</li>`).join("")}</ul></section>` : ""}
+        ${r.factors.map((f) => `<li>${esc(f.label)} ${f.rows.filter((x) => x.n).map((x) => `${esc(x.text)}: ${dayText(x)}`).join(" · ")}</li>`).join("")}</ul></section>` : ""}
 
       ${r.perSymptom.length ? `<section><h2>Sintomas e o que veio antes</h2>
         <div class="table-wrap"><table>
