@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261024235501"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025004738"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -1146,22 +1146,51 @@ function viewFoods() {
   setChrome({ title: "Alimentos", tab: "alimentos" });
   const usage = foodUsage();
   const foods = all("food").sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  // Filtros: nota da barriga e classificação (nota de saúde). Cada botão abre a lista de opções.
+  const GUT_OPTS = [["", "Todas"], ...Object.entries(GUT).map(([k, h]) => [k, `${h.emoji} ${h.label}`]), ["meu", "⚠️ Seu gatilho"], ["sem", "❔ Sem nota"]];
+  const HEALTH_OPTS = [["", "Todas"], ...Object.entries(HEALTH).map(([k, h]) => [k, `${h.emoji} ${h.label}`]), ["sem", "❔ Sem nota"]];
+  const filter = { gut: "", health: "", ...LS.get("da_food_filter", {}) };
+  let open = null;
+  const optLabel = (opts, v) => (opts.find(([k]) => k === v) || opts[0])[1];
+  const passGut = (f) => !filter.gut || (filter.gut === "meu" ? isTrigger(f) : filter.gut === "sem" ? !GUT[f.gut] : gutOf(f) === filter.gut);
+  const passHealth = (f) => !filter.health || (filter.health === "sem" ? !HEALTH[f.health] : f.health === filter.health);
+  const drawFilters = () => {
+    const btn = (key, title, opts) => `
+      <div class="ff">
+        <button class="ff-btn ${filter[key] ? "on" : ""}" data-ff="${key}" aria-expanded="${open === key}">
+          <span class="ff-title">${title}</span><span class="ff-val">${esc(optLabel(opts, filter[key]))}</span><span class="ff-caret">${open === key ? "▴" : "▾"}</span></button>
+        ${open === key ? `<div class="ff-menu" role="listbox">${opts.map(([k, l]) => `<button class="ff-opt ${filter[key] === k ? "on" : ""}" data-fopt="${key}" data-v="${k}" role="option" aria-selected="${filter[key] === k}">${esc(l)}</button>`).join("")}</div>` : ""}
+      </div>`;
+    document.getElementById("foods-filters").innerHTML = btn("gut", "Nota de barriga", GUT_OPTS) + btn("health", "Classificação", HEALTH_OPTS);
+  };
   $view.innerHTML = `
     <input type="search" id="foods-q" placeholder="Buscar alimento" autocomplete="off">
+    <div class="ff-row" id="foods-filters"></div>
     ${foods.length ? `<button class="btn" data-action="suggest-groups">Preencher grupos automaticamente</button>` : ""}
+    <span class="muted small" id="foods-count"></span>
     <div class="card" id="foods-list"></div>
     <button class="btn" data-action="new-food">+ Novo alimento</button>`;
   const draw = () => {
     const term = norm(document.getElementById("foods-q").value);
-    const rows = foods.filter((f) => norm(f.name).includes(term));
+    const rows = foods.filter((f) => norm(f.name).includes(term) && passGut(f) && passHealth(f));
+    const filtered = filter.gut || filter.health;
+    document.getElementById("foods-count").textContent = filtered ? `${plural(rows.length, "alimento", "alimentos")} com esse filtro` : "";
     document.getElementById("foods-list").innerHTML = rows.length
       ? rows.map((f) => `<button class="food-opt" data-id="${f.id}"><span>${HEALTH[f.health] ? HEALTH[f.health].emoji + " " : ""}${GUT[gutOf(f)] ? GUT[gutOf(f)].emoji + " " : ""}${esc(f.name)}${isTrigger(f) ? ' <span class="pill alert">⚠️ seu gatilho</span>' : ""}<br><span class="muted small">${f.mode === "unit" ? "por unidade" + (f.unitWeight ? ` · ${fmtNum(f.unitWeight)} g cada` : "") : "por peso"}${f.groups?.length ? ` · ${esc(groupsText(f))}` : ""}${f.groupsManual ? " ✓" : ""}</span></span><span class="muted small">${usage[f.id] || 0}×</span></button>`).join("")
-      : `<p class="empty">${foods.length ? "Nada encontrado." : "Nenhum alimento cadastrado ainda. Eles também são cadastrados na hora, dentro de uma refeição."}</p>`;
+      : `<p class="empty">${foods.length ? (filter.gut || filter.health ? "Nenhum alimento com esse filtro." : "Nada encontrado.") : "Nenhum alimento cadastrado ainda. Eles também são cadastrados na hora, dentro de uma refeição."}</p>`;
   };
-  draw();
+  drawFilters(); draw();
   $view.oninput = (e) => { if (e.target.id === "foods-q") draw(); };
   $view.onchange = null;
   $view.onclick = (e) => {
+    const fb = e.target.closest("[data-ff]");
+    if (fb) { open = open === fb.dataset.ff ? null : fb.dataset.ff; return drawFilters(); }
+    const fo = e.target.closest("[data-fopt]");
+    if (fo) {
+      filter[fo.dataset.fopt] = fo.dataset.v; open = null;
+      LS.set("da_food_filter", filter); drawFilters(); draw(); return;
+    }
+    if (open) { open = null; drawFilters(); }
     const opt = e.target.closest(".food-opt");
     if (opt) return editFood(get(opt.dataset.id), usage[opt.dataset.id] || 0);
     if (e.target.closest("[data-action=new-food]")) editFood(null, 0);
