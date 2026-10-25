@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025135556"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025135834"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -1716,6 +1716,20 @@ function summaryText(r, rangeText) {
 
 /* ---------- Relatório para a nutricionista (para imprimir ou salvar em PDF) ---------- */
 
+let reportMode = LS.get("da_report_mode", "completo");
+
+// Registro do período em texto, para colar no WhatsApp ou no e-mail.
+function registroText(mealDays, rangeText) {
+  const lines = [`Diário alimentar · registro do período · ${rangeText}`];
+  for (const { d, ms, day } of mealDays) {
+    lines.push("", cap(fmtLong(d)) + (hasSymptoms(day) ? " (sintoma)" : ""));
+    for (const m of ms) lines.push(`- ${m.time || "--:--"} ${m.name || "Refeição"}: ${(m.items || []).map((it) => `${foodName(it.foodId)} ${qtyText(it, get(it.foodId))}`.trim()).join(", ") || "sem alimentos"}`);
+    for (const sy of (day.symptoms || []).filter((x) => x.time)) lines.push(`- ${sy.time} sintoma: ${sy.type}${sy.intensity ? ` (${INT_LABEL[sy.intensity].toLowerCase()})` : ""}`);
+    if (day.giNote) lines.push(`  Obs.: ${day.giNote}`);
+  }
+  return lines.join("\n");
+}
+
 function viewReport() {
   setChrome({ title: "Relatório", back: "#/analise", tab: "analise" });
   const end = analysis.end || today();
@@ -1732,7 +1746,20 @@ function viewReport() {
     if (ms.length || hasSymptoms(day)) mealDays.push({ d, ms, day });
   }
 
+  // O registro do período é a parte principal: vai no topo, e também pode sair sozinho.
+  const registro = mealDays.length ? `<section><h2>Registro do período</h2>
+        ${mealDays.map(({ d, ms, day }) => `<div class="report-day"><h3>${esc(cap(fmtLong(d)))}${hasSymptoms(day) ? ' <span class="pill alert">sintoma</span>' : ""}</h3>
+          ${ms.map((m) => `<p><b>${esc(m.time || "--:--")} ${esc(m.name || "Refeição")}</b> · ${(m.items || []).map((it) => esc(`${foodName(it.foodId)} ${qtyText(it, get(it.foodId))}`.trim())).join(", ") || "sem alimentos"}${m.totalWeight || mealTotals(m).grams ? ` <span class="muted">(${esc(totalText(m))})</span>` : ""}</p>`).join("")}
+          ${(day.symptoms || []).filter((s) => s.time).map((s) => `<p class="alert-text">${esc(s.time)} ${esc(s.type)}${s.intensity ? ` (${esc(INT_LABEL[s.intensity].toLowerCase())})` : ""}</p>`).join("")}
+          ${day.giNote ? `<p class="muted">${esc(day.giNote)}</p>` : ""}
+        </div>`).join("")}</section>` : "";
+  const full = reportMode !== "registro";
+
   $view.innerHTML = `
+    <div class="seg no-print" role="group" aria-label="Tipo de relatório">
+      <button class="${full ? "on" : ""}" data-action="rep-mode" data-mode="completo" aria-pressed="${full}">COMPLETO</button>
+      <button class="${full ? "" : "on"}" data-action="rep-mode" data-mode="registro" aria-pressed="${!full}">SÓ O REGISTRO</button>
+    </div>
     <div class="no-print row">
       <button class="btn primary" data-action="print">Imprimir ou salvar PDF</button>
       <button class="btn" data-action="copy">Copiar em texto</button>
@@ -1740,11 +1767,13 @@ function viewReport() {
     <p class="muted small no-print" style="margin:0">No iPhone: toque em Imprimir, depois em Compartilhar para salvar como PDF ou enviar.</p>
     <article class="report card">
       <header>
-        <h1>Diário alimentar</h1>
+        <h1>Diário alimentar${full ? "" : ": registro do período"}</h1>
         <p class="muted">${esc(cap(rangeText))} · gerado em ${esc(fmtShort(today()))}<br>
-          Janela da análise: ${esc(r.winText)} do sintoma</p>
+          ${full ? `Janela da análise: ${esc(r.winText)} do sintoma` : `${plural(mealDays.length, "dia registrado", "dias registrados")}`}</p>
       </header>
 
+      ${registro || (full ? "" : `<p class="muted">Nada registrado no período.</p>`)}
+      ${full ? `
       <section><h2>Resumo</h2>
         <ul>
           <li>${plural(r.mealCount, "refeição registrada", "refeições registradas")}, ${plural(r.symptoms.length, "sintoma com horário", "sintomas com horário")}, ${plural(r.symptomDays, "dia com sintoma", "dias com sintoma")}.</li>
@@ -1788,14 +1817,7 @@ function viewReport() {
             <td>${s.foods.length ? s.foods.map((f) => `${esc(foodName(f.foodId))} (${fmtDur(f.gap)})`).join(", ") : "–"}</td></tr>`).join("")}</tbody>
         </table></div></section>` : ""}
 
-      ${mealDays.length ? `<section><h2>Registro do período</h2>
-        ${mealDays.map(({ d, ms, day }) => `<div class="report-day"><h3>${esc(cap(fmtLong(d)))}${hasSymptoms(day) ? ' <span class="pill alert">sintoma</span>' : ""}</h3>
-          ${ms.map((m) => `<p><b>${esc(m.time || "--:--")} ${esc(m.name || "Refeição")}</b> · ${(m.items || []).map((it) => esc(`${foodName(it.foodId)} ${qtyText(it, get(it.foodId))}`.trim())).join(", ") || "sem alimentos"}${m.totalWeight || mealTotals(m).grams ? ` <span class="muted">(${esc(totalText(m))})</span>` : ""}</p>`).join("")}
-          ${(day.symptoms || []).filter((s) => s.time).map((s) => `<p class="alert-text">${esc(s.time)} ${esc(s.type)}${s.intensity ? ` (${esc(INT_LABEL[s.intensity].toLowerCase())})` : ""}</p>`).join("")}
-          ${day.giNote ? `<p class="muted">${esc(day.giNote)}</p>` : ""}
-        </div>`).join("")}</section>` : ""}
-
-      <p class="muted small">A análise mostra coincidências no tempo entre o que foi comido e os sintomas, não um diagnóstico.</p>
+      <p class="muted small">A análise mostra coincidências no tempo entre o que foi comido e os sintomas, não um diagnóstico.</p>` : ""}
     </article>`;
 
   $view.oninput = null;
@@ -1803,9 +1825,10 @@ function viewReport() {
   $view.onclick = async (e) => {
     const el = e.target.closest("[data-action]");
     if (!el) return;
+    if (el.dataset.action === "rep-mode") { reportMode = el.dataset.mode; LS.set("da_report_mode", reportMode); return render(); }
     if (el.dataset.action === "print") window.print();
     if (el.dataset.action === "copy") {
-      try { await navigator.clipboard.writeText(summaryText(r, rangeText)); toast("Resumo copiado"); }
+      try { await navigator.clipboard.writeText(full ? summaryText(r, rangeText) : registroText(mealDays, rangeText)); toast(full ? "Resumo copiado" : "Registro copiado"); }
       catch { toast("Não foi possível copiar"); }
     }
   };
