@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025140359"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261025140751"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
