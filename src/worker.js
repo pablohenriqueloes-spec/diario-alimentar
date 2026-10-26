@@ -75,6 +75,12 @@ const GROUPS = {
   "Ultraprocessado": "produto industrializado ultraprocessado (embutidos, salsicha, refrigerante, biscoito recheado, salgadinho, macarrão instantâneo). Comida caseira ou de restaurante não é ultraprocessada, mesmo que leve um ingrediente industrializado",
 };
 
+// "sem glúten", "zero lactose", "sem açúcar": o alimento NÃO tem aquilo.
+const WITHOUT_RULE = "\n\nAtenção às palavras \"sem\", \"zero\", \"livre de\", \"0%\" e \"des-\" (descafeinado, desnatado): o alimento NÃO contém aquilo. " +
+  "Ex.: macarrão sem glúten não tem glúten nem trigo (nem frutanos do trigo); leite ou iogurte sem lactose ou zero lactose não tem lactose; " +
+  "cerveja sem álcool não tem álcool; café descafeinado quase não tem cafeína. " +
+  "Produtos \"sem açúcar\" ou \"zero açúcar\" não têm açúcar, mas costumam ter adoçantes polióis (sorbitol, maltitol, xilitol).";
+
 const MODEL = "@cf/openai/gpt-oss-120b";
 
 // Texto da resposta do modelo, qualquer que seja o formato de saída dele.
@@ -118,7 +124,7 @@ async function suggestGroups(request, env) {
       (examples.length
         ? "\n\nClassificações já confirmadas por quem usa o app. Siga o mesmo critério para alimentos parecidos:\n" +
           examples.map((e) => `- ${describe(e)}: ${e.groups.join(", ") || "nenhum grupo"}`).join("\n")
-        : "") +
+        : "") + WITHOUT_RULE +
       "\n\nResponda somente com um objeto JSON, sem texto antes ou depois, no formato {\"nome do alimento\": [\"Grupo\", ...]}, " +
       "usando como chave exatamente o nome do alimento (sem o preparo).\n\nAlimentos:\n" + chunk.map((f) => `- ${describe(f)}`).join("\n");
     const text = await askModel(env, prompt);
@@ -165,7 +171,7 @@ async function classifyHealth(env, foods, examples = []) {
       Object.entries(HEALTH_LEVELS).map(([k, d]) => `- ${k}: ${d}`).join("\n") +
       (examples.length
         ? "\n\nNotas já confirmadas por quem usa o app. Siga o mesmo critério:\n" + examples.map((e) => `- ${describe(e)}: ${e.health}`).join("\n")
-        : "") +
+        : "") + WITHOUT_RULE +
       "\n\nResponda somente com um objeto JSON, sem texto antes ou depois, no formato {\"nome do alimento\": \"nota\"}, " +
       "usando como chave exatamente o nome do alimento (sem o preparo).\n\nAlimentos:\n" + chunk.map((f) => `- ${describe(f)}`).join("\n");
     // Uma segunda tentativa, com mais raciocínio, para o que a primeira não respondeu direito.
@@ -230,7 +236,7 @@ async function classifyGut(env, foods, examples = []) {
       "Para cada alimento abaixo, como costuma ser consumido no Brasil em porção normal, dê uma nota e os motivos.\nNotas:\n" +
       Object.entries(GUT_LEVELS).map(([k, d]) => `- ${k}: ${d}`).join("\n") +
       "\nMotivos possíveis (até 3, só os que se aplicam; pode ser nenhum):\n" + Object.entries(WHY).map(([k, d]) => `- ${k}: ${d}`).join("\n") +
-      (examples.length ? "\n\nNotas já confirmadas por quem usa o app. Siga o mesmo critério:\n" + examples.map((e) => `- ${describe(e)}: ${e.gut} (${e.why.join(", ") || "sem motivo"})`).join("\n") : "") +
+      (examples.length ? "\n\nNotas já confirmadas por quem usa o app. Siga o mesmo critério:\n" + examples.map((e) => `- ${describe(e)}: ${e.gut} (${e.why.join(", ") || "sem motivo"})`).join("\n") : "") + WITHOUT_RULE +
       "\n\nResponda somente com um objeto JSON, sem texto antes ou depois, no formato {\"nome do alimento\": {\"nota\": \"ok|atencao|gatilho\", \"motivos\": [\"...\"]}}, " +
       "usando como chave exatamente o nome do alimento (sem o preparo).\n\nAlimentos:\n" + chunk.map((f) => `- ${describe(f)}`).join("\n");
     for (const effort of ["low", "medium"]) {

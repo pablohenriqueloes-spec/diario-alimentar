@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261026001327"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261026215150"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -1079,7 +1079,8 @@ const pairText = (x) => `Comeu os dois juntos ${vezes(x.eaten)}. ${symText(x)}`;
 const dayText = (x) => `${plural(x.n, "dia", "dias")} assim. Teve sintoma em ${x.sym}.`;
 
 // "massinha de creme e café com leite" ou "arroz, feijão" viram um alimento por pedaço.
-const parts = (text) => text.split(/\s*,\s*|\s+e\s+/i).map((x) => x.trim()).filter(Boolean);
+// "pão sem glúten e sem lactose" continua um alimento só: "e" antes de sem/com/zero não separa.
+const parts = (text) => text.split(/\s*,\s*|\s+e\s+(?!(?:sem|com|zero|light|diet|des)\b)/i).map((x) => x.trim()).filter(Boolean);
 
 // Digita o nome, escolhe um cadastrado ou segue com um novo; o cadastro acontece ao salvar.
 function openFoodSheet(onPick) {
