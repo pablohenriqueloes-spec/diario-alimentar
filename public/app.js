@@ -285,7 +285,7 @@ function gutDayScore(date) {
 
 /* ---------- Personagem do dia (Friends) ---------- */
 
-// Fotos ficam em public/friends/ (fora do Git, por serem dos atores).
+// Fotos em public/friends/.
 const CHARACTERS = [
   [10, "janice", "Janice", "Oh. My. God! 😱", "janice.jpg"],
   [35, "chandler", "Chandler", "Could this day BE any worse? 🙄", "chandler.jpg"],
