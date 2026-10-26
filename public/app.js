@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261025235754"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261026000329"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -298,10 +298,13 @@ const Q_MOOD = { bem: 30, regular: 15, mal: 0 };
 const Q_SYMPTOM = { leve: 15, moderado: 8, forte: 0 };
 
 // Nota parcial: 70% das 4 perguntas de "Como foi o dia" + 30% da comida do dia (saúde e barriga).
-// Só existe quando as 4 perguntas foram respondidas.
+// Só existe quando as 4 perguntas foram respondidas e há pelo menos 2 refeições com alimento.
+const MIN_MEALS = 2;
+const mealsWithFood = (date) => mealsOn(date).filter((m) => (m.items || []).length).length;
+const answered = (d) => !!(d.mood && d.sleep && d.exercise && d.gi);
 function partialScore(date) {
   const d = getDay(date);
-  if (!d.mood || !d.sleep || !d.exercise || !d.gi) return null;
+  if (!answered(d) || mealsWithFood(date) < MIN_MEALS) return null;
   let sym = 25;
   if (d.gi === "sim") {
     const ints = (d.symptoms || []).map((s) => Q_SYMPTOM[s.intensity]).filter((v) => v != null);
@@ -826,7 +829,10 @@ function viewDay(date) {
       <a class="btn small" href="#/dia/${addDays(date, 1)}">${esc(fmtShort(addDays(date, 1)))} ›</a>
     </div>
     ${pc ? `<button class="card sc-day char-mini" data-action="show-char"><img src="${pc.char.img}" alt=""><span><b class="num">${esc(pc.char.name)} · ${pc.score}</b><br><span class="small">${esc(pc.char.phrase)}</span></span></button>`
-      : `<p class="muted small" style="margin:0">Responda as 4 perguntas de "Como foi o dia" para descobrir quem você foi hoje 🎬</p>`}
+      : `<p class="muted small" style="margin:0">🎬 Para descobrir quem você foi hoje: ${[
+          answered(day) ? "" : "responda as 4 perguntas de \"Como foi o dia\"",
+          mealsWithFood(date) >= MIN_MEALS ? "" : `registre ${MIN_MEALS - mealsWithFood(date) === 1 ? "mais 1 refeição" : "pelo menos 2 refeições"}`,
+        ].filter(Boolean).join(" e ")}.</p>`}
     ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
       <span><b class="num">Barriga: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
@@ -1019,6 +1025,7 @@ function viewMeal(id) {
       case "del-item": m.items.splice(Number(el.dataset.i), 1); saveMeal(m); render(); break;
       case "add-food": openFoodSheet((foodId, qty) => {
         const mm = reload(); mm.items.push({ foodId, qty }); saveMeal(mm); render(); toast(gutWarning(foodId) || "Alimento salvo");
+        maybeShowCharacter(mm.date); // a 2ª refeição pode completar o dia
       }); break;
       case "save-meal":
         document.activeElement?.blur(); // confirma o campo que estiver sendo digitado
