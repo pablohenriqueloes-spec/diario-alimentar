@@ -27,5 +27,5 @@ lactose, frutose, poliois, gordura, cafeina, alcool, gas, picante, insoluvel, so
 (Monash University e diretrizes ACG/NICE) e IA para o resto, na rota `/api/gut`. O mesmo cron semanal preenche.
 Gatilhos pessoais são calculados no aparelho a partir da análise dos últimos 60 dias.
 
-Personagem do dia (Friends): ao responder as 4 perguntas de "Como foi o dia", uma nota parcial (70% respostas,
-30% comida do dia) escolhe o personagem, mostrado num modal por 15 s. As fotos ficam em `public/friends/`.
+Personagem do dia (Friends): ao responder as 4 perguntas de "Como foi o dia", uma nota parcial (40% respostas,
+60% comida do dia) escolhe o personagem, mostrado num modal por 15 s. As fotos ficam em `public/friends/`.

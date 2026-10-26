@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261026000437"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261026001327"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -297,10 +297,12 @@ const CHARACTERS = [
 ].map(([max, key, name, phrase, img]) => ({ max, key, name, phrase, img: "friends/" + img }));
 const characterFor = (score) => CHARACTERS.find((c) => score < c.max);
 const CHAR = Object.fromEntries(CHARACTERS.map((c) => [c.key, c]));
-const Q_MOOD = { bem: 30, regular: 15, mal: 0 };
-const Q_SYMPTOM = { leve: 15, moderado: 8, forte: 0 };
+// Perguntas (até 100): emocional 35, sintoma 30, atividade física 20, dormiu bem 15 (o menor peso).
+const Q_MOOD = { bem: 35, regular: 17, mal: 0 };
+const Q_SYMPTOM = { leve: 18, moderado: 9, forte: 0 };
+const W_FOOD = 0.6, W_QUESTIONS = 0.4;
 
-// Nota parcial: 70% das 4 perguntas de "Como foi o dia" + 30% da comida do dia (saúde e barriga).
+// Nota parcial: 40% das 4 perguntas de "Como foi o dia" + 60% da comida do dia (saúde e barriga).
 // Só existe quando as 4 perguntas foram respondidas e há pelo menos 2 refeições com alimento.
 const MIN_MEALS = 2;
 const mealsWithFood = (date) => mealsOn(date).filter((m) => (m.items || []).length).length;
@@ -308,15 +310,15 @@ const answered = (d) => !!(d.mood && d.sleep && d.exercise && d.gi);
 function partialScore(date) {
   const d = getDay(date);
   if (!answered(d) || mealsWithFood(date) < MIN_MEALS) return null;
-  let sym = 25;
+  let sym = 30;
   if (d.gi === "sim") {
     const ints = (d.symptoms || []).map((s) => Q_SYMPTOM[s.intensity]).filter((v) => v != null);
-    sym = ints.length ? Math.min(...ints) : 8;
+    sym = ints.length ? Math.min(...ints) : Q_SYMPTOM.moderado;
   }
-  const q = Q_MOOD[d.mood] + (d.sleep === "sim" ? 25 : 0) + (d.exercise === "sim" ? 20 : 0) + sym;
+  const q = Q_MOOD[d.mood] + sym + (d.exercise === "sim" ? 20 : 0) + (d.sleep === "sim" ? 15 : 0);
   const foods = [dayScore(date)?.score, gutDayScore(date)?.score].filter((v) => v != null);
   const food = foods.length ? avg(foods) : null;
-  const score = Math.round(food == null ? q : q * 0.7 + food * 0.3);
+  const score = Math.round(food == null ? q : q * W_QUESTIONS + food * W_FOOD);
   return { score, q, food, char: characterFor(score) };
 }
 
