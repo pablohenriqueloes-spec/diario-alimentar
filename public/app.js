@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261026000329"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261026000437"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -167,12 +167,15 @@ const settings = () => ({ winMin: 30, winMax: 8, ...(get("settings") || {}) }); 
 const foodName = (id) => get(id)?.name || "(alimento excluído)";
 const unitLabel = (food) => (food?.mode === "unit" ? "un." : "g");
 
+// Sintomas só valem com "Teve sintoma?" = Sim; ao tirar o Sim, os sintomas antigos somem.
 function getDay(date) {
-  return {
+  const d = {
     date, mood: null, moodNote: "", exercise: null, exerciseNote: "", sleep: null, sleepNote: "",
     gi: null, giNote: "", symptoms: [],
     ...(get("day:" + date) || {}),
   };
+  if (d.gi !== "sim") d.symptoms = [];
+  return d;
 }
 function saveDay(day) {
   const { id, ...data } = day;
@@ -217,7 +220,7 @@ function foodUsage() {
   return count;
 }
 
-const hasSymptoms = (day) => day.gi === "sim" || (day.symptoms || []).length > 0;
+const hasSymptoms = (day) => day.gi === "sim";
 
 /* ---------- Pontuação ---------- */
 
@@ -1482,7 +1485,7 @@ function analyze(startDate, endDate) {
   const symptoms = [];
   let giNoTime = 0;
   for (const d of days) {
-    const timed = (d.symptoms || []).filter((s) => s.time);
+    const timed = (d.gi === "sim" ? d.symptoms || [] : []).filter((s) => s.time);
     if (d.gi === "sim" && !timed.length) giNoTime++;
     for (const s of timed) symptoms.push({ ...s, date: d.date, t: at(d.date, s.time) });
   }
