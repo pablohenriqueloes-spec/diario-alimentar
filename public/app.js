@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261026215150"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261026215626"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -306,14 +306,16 @@ const W_FOOD = 0.6, W_QUESTIONS = 0.4;
 // Só existe quando as 4 perguntas foram respondidas e há pelo menos 2 refeições com alimento.
 const MIN_MEALS = 2;
 const mealsWithFood = (date) => mealsOn(date).filter((m) => (m.items || []).length).length;
-const answered = (d) => !!(d.mood && d.sleep && d.exercise && d.gi);
+// Com sintoma, a pesquisa só termina quando cada sintoma tem a intensidade.
+const symptomsRated = (d) => d.gi !== "sim" || ((d.symptoms || []).length > 0 && d.symptoms.every((s) => Q_SYMPTOM[s.intensity] != null));
+const answered = (d) => !!(d.mood && d.sleep && d.exercise && d.gi) && symptomsRated(d);
 function partialScore(date) {
   const d = getDay(date);
   if (!answered(d) || mealsWithFood(date) < MIN_MEALS) return null;
   let sym = 30;
   if (d.gi === "sim") {
     const ints = (d.symptoms || []).map((s) => Q_SYMPTOM[s.intensity]).filter((v) => v != null);
-    sym = ints.length ? Math.min(...ints) : Q_SYMPTOM.moderado;
+    sym = Math.min(...ints);
   }
   const q = Q_MOOD[d.mood] + sym + (d.exercise === "sim" ? 20 : 0) + (d.sleep === "sim" ? 15 : 0);
   const foods = [dayScore(date)?.score, gutDayScore(date)?.score].filter((v) => v != null);
@@ -835,9 +837,10 @@ function viewDay(date) {
     </div>
     ${pc ? `<button class="card sc-day char-mini" data-action="show-char"><img src="${pc.char.img}" alt=""><span><b class="num">${esc(pc.char.name)} · ${pc.score}</b><br><span class="small">${esc(pc.char.phrase)}</span></span></button>`
       : `<p class="muted small" style="margin:0">🎬 Para descobrir quem você foi hoje: ${[
-          answered(day) ? "" : "responda as 4 perguntas de \"Como foi o dia\"",
+          day.mood && day.sleep && day.exercise && day.gi ? "" : "responda as 4 perguntas de \"Como foi o dia\"",
+          symptomsRated(day) ? "" : "informe a intensidade do sintoma",
           mealsWithFood(date) >= MIN_MEALS ? "" : `registre ${MIN_MEALS - mealsWithFood(date) === 1 ? "mais 1 refeição" : "pelo menos 2 refeições"}`,
-        ].filter(Boolean).join(" e ")}.</p>`}
+        ].filter(Boolean).reduce((acc, x, i, arr) => acc + (i === 0 ? "" : i === arr.length - 1 ? " e " : ", ") + x, "")}.</p>`}
     ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
       <span><b class="num">Barriga: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
