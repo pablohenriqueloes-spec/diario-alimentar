@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027021833"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027023124"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -1026,11 +1026,11 @@ function viewMeal(id) {
     </div>
     <div class="card">
       <h2>Alimentos</h2>
+      <button class="btn block" data-action="add-food">+ Adicionar alimento</button>
       ${items || `<p class="empty">Nenhum alimento ainda.</p>`}
       <div class="total-bar"><span>Total da refeição</span>
         <span class="qty"><input type="text" inputmode="decimal" id="meal-total" aria-label="Peso total da refeição"> <span class="muted">g</span></span></div>
       <span class="muted small" id="total-note"></span>
-      <button class="btn block" data-action="add-food">+ Adicionar alimento</button>
     </div>
     <button class="btn primary block" data-action="save-meal">Salvar refeição</button>
     <button class="btn danger" data-action="del-meal">Excluir refeição</button>`;
