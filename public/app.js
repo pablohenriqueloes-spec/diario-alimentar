@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027020034"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027021307"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -258,14 +258,14 @@ const WHY = {
 const GUT_SOURCE = { tabela: "pela tabela da Monash e das diretrizes", ia: "pela IA", manual: "por você" };
 const whyText = (f) => (f?.gutWhy || []).filter((w) => WHY[w]).map((w) => `${WHY[w][0]} ${WHY[w][1]}`).join(", ");
 const GUT_LEVELS = [
-  [80, "😌", "top", ["Barriga em paz 😌", "Dia leve pra barriga 🍃", "Barriga agradece! 🙏"]],
-  [60, "🙂", "good", ["Barriga tranquila 🙂", "Quase tudo leve hoje 👍", "Bom pra barriga 🌱"]],
-  [40, "😕", "meh", ["Uns gatilhos no caminho 🤏", "Barriga de olho 👀", "Meio pesado hoje 🫤"]],
-  [0, "😣", "low", ["Barriga em alerta 🚨", "Muitos gatilhos hoje 🔴", "Dia pesado pra barriga 😣"]],
+  [80, "😌", "top"],
+  [60, "🙂", "good"],
+  [40, "😕", "meh"],
+  [0, "😣", "low"],
 ];
-function gutLevel(score, key = "") {
-  const [, emoji, tone, msgs] = GUT_LEVELS.find(([min]) => score >= min);
-  return { emoji, tone, msg: msgs[hashStr(key) % msgs.length] };
+function gutLevel(score) {
+  const [, emoji, tone] = GUT_LEVELS.find(([min]) => score >= min);
+  return { emoji, tone };
 }
 
 // Gatilhos pessoais: alimentos que, nos últimos 60 dias, vêm antes de sintoma 1,5× mais que a média.
@@ -803,7 +803,7 @@ function scoreCard(t, ws, mStart, mEnd) {
       </div>
       ${head ? `<p class="sc-msg">${esc(head.who)}: ${esc(level(head.s, head.key).msg)}</p>` : `<p class="sc-msg muted">Registre as refeições de hoje para ganhar sua primeira nota 🍽️</p>`}
       ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}${mealBonus(d.meals) ? ` · +${mealBonus(d.meals)} de constância` : ""}</span>` : ""}
-      ${g ? `<span class="small">Irritação hoje: ${gutLevel(g.score, "g" + t).msg} · 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
+      ${g ? `<span class="small">Irritação hoje: 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
       ${(() => { const mc = monthCharacters(mStart, mEnd); return mc.length ? `<div class="char-month"><span class="small">🎬 Em ${esc(monthShort(mStart).toLowerCase())} você foi:</span>
         <div class="char-list">${mc.map(([k, n]) => `<span class="char-chip"><img src="${CHAR[k].img}" alt="">${esc(CHAR[k].name)} ${n}×</span>`).join("")}</div></div>` : ""; })()}
       ${st >= 2 ? `<span class="small sc-streak">🔥 ${st} dias seguidos registrando</span>` : ""}
@@ -883,7 +883,7 @@ function viewDay(date) {
           mealsWithFood(date) >= MIN_MEALS ? "" : `registre ${MIN_MEALS - mealsWithFood(date) === 1 ? "mais 1 refeição" : "pelo menos 2 refeições"}`,
         ].filter(Boolean).reduce((acc, x, i, arr) => acc + (i === 0 ? "" : i === arr.length - 1 ? " e " : ", ") + x, "")}.</p>`}
     ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
-      <span><b class="num">Irritação: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
+      <span><b class="num">Irritação: ${g.score}</b><br><span class="small">🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
       <span><b class="num">Nota do dia: ${ds.score}</b><br><span class="small">${esc(level(ds.score, date).msg)}<br>🥦 ${ds.counts.saudavel} · 🍞 ${ds.counts.moderado} · 🍟 ${ds.counts.evitar}</span></span></div>` : ""}
     <div class="card">
