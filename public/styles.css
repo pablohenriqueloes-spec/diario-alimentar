@@ -497,3 +497,4 @@ details.rank-row[open] summary .rank-name::after { transform: rotate(90deg); }
 .lg-thermo { display: grid; grid-template-columns: repeat(4, 1fr); text-align: center; margin: 4px 0 2px; }
 .lg-thermo span { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .lg-thermo small { font-size: 11px; color: var(--muted); }
+.btn-add { color: var(--accent); border-color: var(--accent); }
