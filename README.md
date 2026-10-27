@@ -36,3 +36,5 @@ almoço 13h, lanche 17h, jantar 19h, ceia 22h). Em Ajustes, "Utilizar sempre hor
 nome da refeição não muda mais o horário.
 A nota de irritação do dia aparece como termômetro (`thermo()` em `public/app.js`): gelado (80+), transparente com
 um ponto vermelho (60 a 79), laranja (40 a 59) e fervendo, tremendo (abaixo de 40).
+Sequência perdida: ao abrir o app, se ontem ficou sem refeição e antes havia 2 ou mais dias seguidos registrados
+(últimos 30 dias), a Janice aparece uma vez (`maybeShowJanice`; marca em `settings.janiceFor`).

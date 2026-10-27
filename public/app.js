@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027023245"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027023643"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -399,17 +399,21 @@ function partialScore(date) {
 
 let charTimer = null;
 function showCharacter(date, p) {
-  const box = document.getElementById("char-modal");
   const c = p.char;
+  openCharModal(c, `
+        <span class="char-score num">${p.score}</span>
+        <b class="char-name">Hoje você foi ${esc(c.name)}!</b>
+        <span class="char-phrase">${esc(c.phrase)}</span>
+        <span class="muted small">Nota parcial de ${esc(fmtShort(date))}: perguntas ${Math.round(p.q)}${p.food != null ? ` · comida ${Math.round(p.food)}` : ""}</span>`);
+}
+// Mesmo modal dos personagens (15 s, com ✕), com o texto que cada caso pedir.
+function openCharModal(c, body) {
+  const box = document.getElementById("char-modal");
   box.innerHTML = `
     <div class="char-card" role="dialog" aria-modal="true" aria-label="${esc(c.name)}">
       <button class="char-close" data-close-char aria-label="Fechar">✕</button>
       <img src="${c.img}" alt="${esc(c.name)}">
-      <div class="char-body">
-        <span class="char-score num">${p.score}</span>
-        <b class="char-name">Hoje você foi ${esc(c.name)}!</b>
-        <span class="char-phrase">${esc(c.phrase)}</span>
-        <span class="muted small">Nota parcial de ${esc(fmtShort(date))}: perguntas ${Math.round(p.q)}${p.food != null ? ` · comida ${Math.round(p.food)}` : ""}</span>
+      <div class="char-body">${body}
       </div>
       <i class="char-timer"></i>
     </div>`;
@@ -433,6 +437,32 @@ function maybeShowCharacter(date) {
   if (!p || dd.charShown === p.char.key) return;
   dd.charShown = p.char.key; saveDay(dd);
   showCharacter(date, p);
+}
+
+// Ao abrir o app (depois de sincronizar, para valer o que veio de outro aparelho).
+const afterOpen = () => { if (password) maybeShowJanice(); };
+
+// Sequência perdida: se ontem ficou sem refeição e antes havia 2 ou mais dias seguidos registrados
+// (o mesmo 🔥 da Pontuação), a Janice aparece ao abrir o app. Uma vez por sequência perdida.
+function lostStreak() {
+  const y = addDays(today(), -1);
+  if (mealsOn(y).length) return null;
+  let last = addDays(y, -1);
+  const limit = addDays(today(), -30);
+  while (last >= limit && !mealsOn(last).length) last = addDays(last, -1);
+  if (last < limit) return null;
+  let n = 0;
+  for (let s = last; mealsOn(s).length; s = addDays(s, -1)) n++;
+  return n >= 2 ? { last, n } : null;
+}
+function maybeShowJanice() {
+  const lost = lostStreak();
+  if (!lost || settings().janiceFor === lost.last || !document.getElementById("char-modal").hidden) return;
+  put("settings", "settings", { ...settings(), janiceFor: lost.last });
+  openCharModal(CHAR.janice, `
+        <b class="char-name">Oh. My. God! 😱</b>
+        <span class="char-phrase">Você perdeu a sequência de ${plural(lost.n, "dia", "dias")} registrando!</span>
+        <span class="muted small">Último registro em ${esc(fmtShort(lost.last))}. Bora recomeçar hoje? 🍽️</span>`);
 }
 
 // Personagens do mês, do mais frequente para o menos.
@@ -2299,7 +2329,7 @@ document.addEventListener("click", (e) => {
 });
 
 window.addEventListener("hashchange", render);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { sync(); checkUpdate(); } });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { sync().finally(afterOpen); checkUpdate(); } });
 window.addEventListener("online", () => sync());
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -2341,6 +2371,6 @@ async function forceUpdate() {
 if (password) setSync("Salvo no aparelho");
 initLegend();
 render();
-sync();
+sync().finally(afterOpen);
 checkUpdate();
 setTimeout(maybeAskNotifications, 2500);
