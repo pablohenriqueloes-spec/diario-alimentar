@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027021538"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027021833"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -450,9 +450,6 @@ function gutWarning(foodId) {
   return null;
 }
 
-// Constância: registrar várias refeições no dia rende bônus.
-const mealBonus = (n) => (n >= 3 ? 10 : n === 2 ? 5 : 0);
-
 const LEVELS = [
   [85, "🤩", "top", ["Nota 10! Tampinha arrasou 🥦", "Prato de campeã! 🏆", "Isso sim é comer bem! ✨"]],
   [70, "😄", "good", ["Mandou bem! 💪", "Tá voando! 🚀", "Muito bom, continua assim! 🌱"]],
@@ -466,7 +463,7 @@ function level(score, key = "") {
   return { emoji, tone, msg: msgs[hashStr(key) % msgs.length] }; // a frase não muda a cada abertura
 }
 
-// Nota do dia (0 a 100): média das notas dos alimentos + bônus de constância.
+// Nota do dia (0 a 100): média das notas dos alimentos, sem bônus.
 function dayScore(date) {
   const meals = mealsOn(date);
   if (!meals.length) return null;
@@ -478,7 +475,7 @@ function dayScore(date) {
     if (!HEALTH[f.health]) { unrated.add(f.id); continue; }
     counts[f.health]++; pts += HEALTH[f.health].pts; n++;
   }
-  const score = n ? Math.min(100, Math.round(pts / n + mealBonus(meals.length))) : null;
+  const score = n ? Math.round(pts / n) : null;
   return { date, score, meals: meals.length, counts, unrated };
 }
 
@@ -834,7 +831,7 @@ function scoreCard(t, ws, mStart, mEnd) {
         ${gutTile(g?.score, t)}
       </div>
       ${head ? `<p class="sc-msg">${esc(head.who)}: ${esc(level(head.s, head.key).msg)}</p>` : `<p class="sc-msg muted">Registre as refeições de hoje para ganhar sua primeira nota 🍽️</p>`}
-      ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}${mealBonus(d.meals) ? ` · +${mealBonus(d.meals)} de constância` : ""}</span>` : ""}
+      ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}</span>` : ""}
       ${g ? `<span class="small">Irritação hoje: 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
       ${(() => { const mc = monthCharacters(mStart, mEnd); return mc.length ? `<div class="char-month"><span class="small">🎬 Em ${esc(monthShort(mStart).toLowerCase())} você foi:</span>
         <div class="char-list">${mc.map(([k, n]) => `<span class="char-chip"><img src="${CHAR[k].img}" alt="">${esc(CHAR[k].name)} ${n}×</span>`).join("")}</div></div>` : ""; })()}
@@ -857,13 +854,11 @@ function scoreHelp(ws) {
     <p class="small" style="margin:0">Cada alimento tem uma nota, seguindo a regra de ouro do <b>Guia Alimentar para a População Brasileira</b>: comida de verdade como base, processados com moderação e ultraprocessados evitados.</p>
     <div class="sc-rules">
       ${Object.values(HEALTH).map((h) => `<span>${h.emoji} <b>${h.label}</b></span><span class="num">${h.pts} pts</span>`).join("")}
-      <span>🍽️ <b>Constância</b>: 2 refeições no dia</span><span class="num">+5</span>
-      <span>🍽️ <b>Constância</b>: 3 ou mais</span><span class="num">+10</span>
     </div>
-    <p class="small" style="margin:0">A nota do dia é a média dos alimentos mais o bônus, até 100. A da semana e a do mês são a média dos dias com nota.</p>
+    <p class="small" style="margin:0">A nota do dia é a média dos alimentos. A da semana e a do mês são a média dos dias com nota.</p>
     <p class="small" style="margin:0">${LEVELS.map(([min, e]) => `${e} ${min}+`).join(" · ")}</p>
     <span class="q-label">Nota de irritação (intestino irritado)</span>
-    <p class="small" style="margin:0">Cada alimento também tem um semáforo, pela Monash University (criadora da dieta low FODMAP) e pelas diretrizes médicas: 🟢 tranquilo (100), 🟡 atenção (60) e 🔴 gatilho comum (15). O quadro Irritação é a média do dia, sem bônus; quanto maior, mais tranquilo. Os motivos aparecem na aba Alimentos: ${Object.values(WHY).map(([e, l]) => `${e} ${l.toLowerCase()}`).join(", ")}.</p>
+    <p class="small" style="margin:0">Cada alimento também tem um semáforo, pela Monash University (criadora da dieta low FODMAP) e pelas diretrizes médicas: 🟢 tranquilo (100), 🟡 atenção (60) e 🔴 gatilho comum (15). O quadro Irritação é a média do dia; quanto maior, mais tranquilo. Os motivos aparecem na aba Alimentos: ${Object.values(WHY).map(([e, l]) => `${e} ${l.toLowerCase()}`).join(", ")}.</p>
     <p class="small" style="margin:0">⚠️ <b>Seu gatilho</b>: quando, pelos seus registros, um alimento vem antes de sintoma 1,5× mais que a média (3 vezes ou mais), ele conta como 🔴, mesmo que a regra geral diga 🟢. Na aba Alimentos dá para marcar "vai bem comigo".</p>
     ${top.length ? `<span class="q-label">🍟 mais comidos nesta semana</span><span class="small">${top.map(([n, c]) => `${esc(n)} (${c}×)`).join(", ")}</span>` : ""}
     <p class="muted small" style="margin:0">A nota de cada alimento pode ser trocada na aba Alimentos.</p>`);
