@@ -22,7 +22,7 @@ Pontuação: cada alimento tem uma nota de saúde (`health`: saudavel, moderado 
 (segunda, 9h UTC) dá nota aos alimentos que ainda não têm.
 A chave VAPID fica no segredo `VAPID_JWK` do Worker (já gravado; trocar a chave obriga a reativar no iPhone).
 
-Barriga (intestino irritado): cada alimento tem também `gut` (ok, atencao ou gatilho) e `gutWhy` (frutanos, gos,
+Nota de irritação (intestino irritado, chamada "barriga" no código): cada alimento tem também `gut` (ok, atencao ou gatilho) e `gutWhy` (frutanos, gos,
 lactose, frutose, poliois, gordura, cafeina, alcool, gas, picante, insoluvel, soluvel), pela tabela de `src/foods.js`
 (Monash University e diretrizes ACG/NICE) e IA para o resto, na rota `/api/gut`. O mesmo cron semanal preenche.
 Gatilhos pessoais são calculados no aparelho a partir da análise dos últimos 60 dias.

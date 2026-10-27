@@ -221,7 +221,7 @@ export function healthLookup(name) {
   return HEALTH.get(singular) ?? null;
 }
 
-// Nota da barriga (intestino irritado), pela Monash University e pelas diretrizes ACG, NICE e Alberta Health:
+// Nota de irritação (intestino irritado), pela Monash University e pelas diretrizes ACG, NICE e Alberta Health:
 // O = tranquilo, A = atenção (depende da porção ou é um gatilho mais fraco), G = gatilho comum.
 // Motivos: Fr frutanos, Go GOS, La lactose, Fu frutose, Po polióis, Gd gordura/fritura, Ca cafeína,
 // Al álcool, Gs gás, Pi picante, In fibra insolúvel, So fibra solúvel (ajuda).

@@ -200,7 +200,7 @@ async function suggestHealth(request, env) {
   return json(await classifyHealth(env, foods, examples));
 }
 
-/* Nota da barriga (intestino irritado): semáforo e motivos. */
+/* Nota de irritação (intestino irritado): semáforo e motivos. */
 
 const GUT_LEVELS = {
   ok: "tranquilo: costuma ser bem tolerado por quem tem síndrome do intestino irritado (pouco FODMAP, pouca gordura, sem cafeína, álcool, gás ou picante)",

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027015524"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027020034"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -244,7 +244,7 @@ const HEALTH = {
 };
 const HEALTH_SOURCE = { tabela: "pela tabela do Guia Alimentar", ia: "pela IA", manual: "por você" };
 
-// Nota da barriga (intestino irritado): semáforo da Monash University e das diretrizes ACG e NICE.
+// Nota de irritação (intestino irritado): semáforo da Monash University e das diretrizes ACG e NICE.
 const GUT = {
   ok: { emoji: "🟢", label: "Tranquilo", pts: 100 },
   atencao: { emoji: "🟡", label: "Atenção", pts: 60 },
@@ -282,7 +282,7 @@ const isTrigger = (f) => !!f && personalTriggers().has(f.id) && !f.gutOkForMe;
 // Seu gatilho vale mais que a regra geral; "vai bem comigo" também.
 const gutOf = (f) => (isTrigger(f) ? "gatilho" : f?.gutOkForMe ? "ok" : f?.gut);
 
-// Nota da barriga no dia: média dos alimentos (sem bônus).
+// Nota de irritação no dia: média dos alimentos (sem bônus).
 function gutDayScore(date) {
   const counts = { ok: 0, atencao: 0, gatilho: 0 }, mine = new Set();
   let pts = 0, n = 0;
@@ -306,11 +306,12 @@ function legendHtml() {
     <h3>Nota de saúde</h3>
     <ul>${Object.values(HEALTH).map((h) => row(h.emoji, `${h.label} (${h.pts} pts)`)).join("")}</ul>
     <p class="lg-sub">Nota do dia: ${LEVELS.map(([, e], i) => `${e} ${hr[i]}`).join(" · ")}</p>
-    <h3>Nota de barriga</h3>
+    <h3>Nota de irritação</h3>
+    <p class="lg-how">Quanto o que você comeu tende a irritar o intestino. Cada alimento ganha uma cor; a nota do dia é a média, de 0 a 100. Quanto maior, mais tranquilo.</p>
     <ul>${Object.values(GUT).map((g) => row(g.emoji, `${g.label} (${g.pts} pts)`)).join("")}
-      ${row("⚠️", "Gatilho seu, pelos seus registros (conta como 🔴)")}${row("❔", "Ainda sem nota")}</ul>
+      ${row("⚠️", "Seu gatilho (conta como 🔴)")}${row("❔", "Ainda sem nota")}</ul>
     <p class="lg-sub">Nota do dia: ${GUT_LEVELS.map(([, e], i) => `${e} ${gr[i]}`).join(" · ")}</p>
-    <h3>Motivos da barriga</h3>
+    <h3>Motivos de irritação</h3>
     <ul class="lg-why">${Object.values(WHY).map(([e, t]) => row(e, t)).join("")}</ul>
   </div>`;
 }
@@ -342,7 +343,7 @@ const Q_MOOD = { bem: 35, regular: 17, mal: 0 };
 const Q_SYMPTOM = { leve: 18, moderado: 9, forte: 0 };
 const W_FOOD = 0.6, W_QUESTIONS = 0.4;
 
-// Nota parcial: 40% das 4 perguntas de "Como foi o dia" + 60% da comida do dia (saúde e barriga).
+// Nota parcial: 40% das 4 perguntas de "Como foi o dia" + 60% da comida do dia (saúde e irritação).
 // Só existe quando as 4 perguntas foram respondidas e há pelo menos 2 refeições com alimento.
 const MIN_MEALS = 2;
 const mealsWithFood = (date) => mealsOn(date).filter((m) => (m.items || []).length).length;
@@ -776,9 +777,9 @@ function scoreTile(label, score, key) {
 }
 
 function gutTile(score, key) {
-  if (score == null) return `<div class="sc-tile"><span class="sc-emoji">🫥</span><span class="sc-num muted">--</span><span class="sc-label">Barriga</span><span class="sc-bar"><i style="width:0"></i></span></div>`;
+  if (score == null) return `<div class="sc-tile"><span class="sc-emoji">🫥</span><span class="sc-num muted">--</span><span class="sc-label">Irritação</span><span class="sc-bar"><i style="width:0"></i></span></div>`;
   const lv = gutLevel(score, key);
-  return `<div class="sc-tile ${lv.tone}"><span class="sc-emoji">${lv.emoji}</span><span class="sc-num">${score}</span><span class="sc-label">Barriga</span><span class="sc-bar"><i style="width:${score}%"></i></span></div>`;
+  return `<div class="sc-tile ${lv.tone}"><span class="sc-emoji">${lv.emoji}</span><span class="sc-num">${score}</span><span class="sc-label">Irritação</span><span class="sc-bar"><i style="width:${score}%"></i></span></div>`;
 }
 
 function scoreCard(t, ws, mStart, mEnd) {
@@ -802,7 +803,7 @@ function scoreCard(t, ws, mStart, mEnd) {
       </div>
       ${head ? `<p class="sc-msg">${esc(head.who)}: ${esc(level(head.s, head.key).msg)}</p>` : `<p class="sc-msg muted">Registre as refeições de hoje para ganhar sua primeira nota 🍽️</p>`}
       ${d?.score != null ? `<span class="small">Hoje: ${mix(d.counts)}${mealBonus(d.meals) ? ` · +${mealBonus(d.meals)} de constância` : ""}</span>` : ""}
-      ${g ? `<span class="small">Barriga hoje: ${gutLevel(g.score, "g" + t).msg} · 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
+      ${g ? `<span class="small">Irritação hoje: ${gutLevel(g.score, "g" + t).msg} · 🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? `<br>⚠️ Seus gatilhos hoje: ${esc(g.mine.join(", "))}` : ""}</span>` : ""}
       ${(() => { const mc = monthCharacters(mStart, mEnd); return mc.length ? `<div class="char-month"><span class="small">🎬 Em ${esc(monthShort(mStart).toLowerCase())} você foi:</span>
         <div class="char-list">${mc.map(([k, n]) => `<span class="char-chip"><img src="${CHAR[k].img}" alt="">${esc(CHAR[k].name)} ${n}×</span>`).join("")}</div></div>` : ""; })()}
       ${st >= 2 ? `<span class="small sc-streak">🔥 ${st} dias seguidos registrando</span>` : ""}
@@ -829,8 +830,8 @@ function scoreHelp(ws) {
     </div>
     <p class="small" style="margin:0">A nota do dia é a média dos alimentos mais o bônus, até 100. A da semana e a do mês são a média dos dias com nota.</p>
     <p class="small" style="margin:0">${LEVELS.map(([min, e]) => `${e} ${min}+`).join(" · ")}</p>
-    <span class="q-label">Barriga (intestino irritado)</span>
-    <p class="small" style="margin:0">Cada alimento também tem um semáforo, pela Monash University (criadora da dieta low FODMAP) e pelas diretrizes médicas: 🟢 tranquilo (100), 🟡 atenção (60) e 🔴 gatilho comum (15). O quadro Barriga é a média do dia, sem bônus. Os motivos aparecem na aba Alimentos: ${Object.values(WHY).map(([e, l]) => `${e} ${l.toLowerCase()}`).join(", ")}.</p>
+    <span class="q-label">Nota de irritação (intestino irritado)</span>
+    <p class="small" style="margin:0">Cada alimento também tem um semáforo, pela Monash University (criadora da dieta low FODMAP) e pelas diretrizes médicas: 🟢 tranquilo (100), 🟡 atenção (60) e 🔴 gatilho comum (15). O quadro Irritação é a média do dia, sem bônus; quanto maior, mais tranquilo. Os motivos aparecem na aba Alimentos: ${Object.values(WHY).map(([e, l]) => `${e} ${l.toLowerCase()}`).join(", ")}.</p>
     <p class="small" style="margin:0">⚠️ <b>Seu gatilho</b>: quando, pelos seus registros, um alimento vem antes de sintoma 1,5× mais que a média (3 vezes ou mais), ele conta como 🔴, mesmo que a regra geral diga 🟢. Na aba Alimentos dá para marcar "vai bem comigo".</p>
     ${top.length ? `<span class="q-label">🍟 mais comidos nesta semana</span><span class="small">${top.map(([n, c]) => `${esc(n)} (${c}×)`).join(", ")}</span>` : ""}
     <p class="muted small" style="margin:0">A nota de cada alimento pode ser trocada na aba Alimentos.</p>`);
@@ -882,7 +883,7 @@ function viewDay(date) {
           mealsWithFood(date) >= MIN_MEALS ? "" : `registre ${MIN_MEALS - mealsWithFood(date) === 1 ? "mais 1 refeição" : "pelo menos 2 refeições"}`,
         ].filter(Boolean).reduce((acc, x, i, arr) => acc + (i === 0 ? "" : i === arr.length - 1 ? " e " : ", ") + x, "")}.</p>`}
     ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
-      <span><b class="num">Barriga: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
+      <span><b class="num">Irritação: ${g.score}</b><br><span class="small">${esc(gutLevel(g.score, "g" + date).msg)}<br>🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
       <span><b class="num">Nota do dia: ${ds.score}</b><br><span class="small">${esc(level(ds.score, date).msg)}<br>🥦 ${ds.counts.saudavel} · 🍞 ${ds.counts.moderado} · 🍟 ${ds.counts.evitar}</span></span></div>` : ""}
     <div class="card">
@@ -1182,7 +1183,7 @@ function openFoodSheet(onPick) {
 
   const fail = (msg) => { $("#fs-err").textContent = msg; $("#fs-err").hidden = false; };
   // Um ou mais alimentos novos: cada um passa pela janela de tipo, um de cada vez.
-  // Alimentos novos: cadastra na hora e classifica sozinho em segundo plano (grupos, saúde e barriga).
+  // Alimentos novos: cadastra na hora e classifica sozinho em segundo plano (grupos, saúde e irritação).
   function addNew(names, data, qtyFor, done) {
     const ids = names.map((name) => {
       const id = "food:" + uid();
@@ -1300,7 +1301,7 @@ function viewFoods() {
   setChrome({ title: "Alimentos", tab: "alimentos" });
   const usage = foodUsage();
   const foods = all("food").sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-  // Filtros: nota da barriga e classificação (nota de saúde). Cada botão abre a lista de opções.
+  // Filtros: nota de irritação e classificação (nota de saúde). Cada botão abre a lista de opções.
   const GUT_OPTS = [["", "Todas"], ...Object.entries(GUT).map(([k, h]) => [k, `${h.emoji} ${h.label}`]), ["meu", "⚠️ Seu gatilho"], ["sem", "❔ Sem nota"]];
   const HEALTH_OPTS = [["", "Todas"], ...Object.entries(HEALTH).map(([k, h]) => [k, `${h.emoji} ${h.label}`]), ["sem", "❔ Sem nota"]];
   const filter = { gut: "", health: "", ...LS.get("da_food_filter", {}) };
@@ -1315,7 +1316,7 @@ function viewFoods() {
           <span class="ff-title">${title}</span><span class="ff-val">${esc(optLabel(opts, filter[key]))}</span><span class="ff-caret">${open === key ? "▴" : "▾"}</span></button>
         ${open === key ? `<div class="ff-menu" role="listbox">${opts.map(([k, l]) => `<button class="ff-opt ${filter[key] === k ? "on" : ""}" data-fopt="${key}" data-v="${k}" role="option" aria-selected="${filter[key] === k}">${esc(l)}</button>`).join("")}</div>` : ""}
       </div>`;
-    document.getElementById("foods-filters").innerHTML = btn("gut", "Nota de barriga", GUT_OPTS) + btn("health", "Classificação", HEALTH_OPTS);
+    document.getElementById("foods-filters").innerHTML = btn("gut", "Nota de irritação", GUT_OPTS) + btn("health", "Classificação", HEALTH_OPTS);
   };
   $view.innerHTML = `
     <input type="search" id="foods-q" placeholder="Buscar alimento" autocomplete="off">
@@ -1434,7 +1435,7 @@ function editFood(food, uses) {
     ${groupChips(food?.groups)}
     <span class="muted small">Nota de saúde (para a pontuação)${HEALTH[food?.health] && food.healthSource ? `: definida ${HEALTH_SOURCE[food.healthSource] || ""}` : ""}</span>
     <div class="chips">${Object.entries(HEALTH).map(([k, h]) => `<button type="button" class="chip ${food?.health === k ? "on" : ""}" data-health="${k}">${h.emoji} ${h.label}</button>`).join("")}</div>
-    <span class="muted small">Barriga (intestino irritado)${GUT[food?.gut] && food.gutSource ? `: definida ${GUT_SOURCE[food.gutSource] || ""}` : ""}</span>
+    <span class="muted small">Nota de irritação (intestino irritado)${GUT[food?.gut] && food.gutSource ? `: definida ${GUT_SOURCE[food.gutSource] || ""}` : ""}</span>
     ${isTrigger(food) ? `<p class="notice" style="margin:0">⚠️ Pelos seus registros, ${esc(food.name)} vem antes de sintoma bem mais que a média, então conta como 🔴 seu gatilho.</p>` : ""}
     <div class="chips">${Object.entries(GUT).map(([k, h]) => `<button type="button" class="chip ${food?.gut === k ? "on" : ""}" data-gut="${k}">${h.emoji} ${h.label}</button>`).join("")}</div>
     <span class="muted small">Motivos</span>
@@ -1734,7 +1735,7 @@ function viewAnalysis() {
     : `<div class="card"><h2>Grupos de alimentos</h2><p class="muted small">Marque os grupos dos alimentos (fritura, FODMAP, lactose…) na aba Alimentos para ver a análise por grupo.</p></div>`;
 
   const reasonsCard = !hasData || !r.reasonRanking.length ? "" : `
-    <div class="card"><h2>Motivos da barriga</h2>
+    <div class="card"><h2>Motivos de irritação</h2>
       <span class="muted small">Quantas vezes você comeu algum alimento com cada motivo (intestino irritado) e quantas vezes teve sintoma depois.</span>
       <div class="rank">${r.reasonRanking.map((g) => `
         <div class="rank-row">
@@ -1843,7 +1844,7 @@ function summaryText(r, rangeText) {
     for (const g of r.groupRanking) lines.push(`- ${g.key}: ${groupText(g)} (${pctText(g.pct)})`);
   }
   if (r.reasonRanking.length) {
-    lines.push("", "Motivos da barriga:");
+    lines.push("", "Motivos de irritação:");
     for (const g of r.reasonRanking) lines.push(`- ${WHY[g.key][1]}: ${reasonText(g)} (${pctText(g.pct)})`);
   }
   const mine = all("food").filter(isTrigger);
@@ -1944,7 +1945,7 @@ function viewReport() {
           <tbody>${r.groupRanking.map((g) => `<tr><td>${esc(g.key)}</td><td class="n">${vezes(g.eaten)}</td><td class="n">${vezes(g.before)} (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
         </table></div></section>` : ""}
 
-      ${r.reasonRanking.length ? `<section><h2>Motivos da barriga (intestino irritado)</h2>
+      ${r.reasonRanking.length ? `<section><h2>Motivos de irritação (intestino irritado)</h2>
         <div class="table-wrap"><table>
           <thead><tr><th>Motivo</th><th class="n">Comeu</th><th class="n">Teve sintoma após comer</th><th class="n">vs. média</th></tr></thead>
           <tbody>${r.reasonRanking.map((g) => `<tr><td>${WHY[g.key][0]} ${esc(WHY[g.key][1])}</td><td class="n">${vezes(g.eaten)}</td><td class="n">${vezes(g.before)} (${pctText(g.pct)})</td><td class="n">${g.lift != null ? fmtNum(g.lift) + "×" : "–"}</td></tr>`).join("")}</tbody>
