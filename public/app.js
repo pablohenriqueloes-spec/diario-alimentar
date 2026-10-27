@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027021307"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027021538"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -257,15 +257,47 @@ const WHY = {
 };
 const GUT_SOURCE = { tabela: "pela tabela da Monash e das diretrizes", ia: "pela IA", manual: "por você" };
 const whyText = (f) => (f?.gutWhy || []).filter((w) => WHY[w]).map((w) => `${WHY[w][0]} ${WHY[w][1]}`).join(", ");
+// Faixas da nota de irritação do dia, cada uma com seu termômetro (quanto maior a nota, mais gelado).
 const GUT_LEVELS = [
-  [80, "😌", "top"],
-  [60, "🙂", "good"],
-  [40, "😕", "meh"],
-  [0, "😣", "low"],
+  [80, "cold", "top"],
+  [60, "cool", "good"],
+  [40, "warm", "meh"],
+  [0, "hot", "low"],
 ];
-function gutLevel(score) {
-  const [, emoji, tone] = GUT_LEVELS.find(([min]) => score >= min);
-  return { emoji, tone };
+function gutLevel(score, size = 36) {
+  const [, kind, tone] = GUT_LEVELS.find(([min]) => score >= min);
+  return { emoji: thermo(kind, size), tone };
+}
+
+// Termômetro em SVG. "cool" é transparente com só um pontinho vermelho embaixo (dia normal, sem alarde).
+let thermoSeq = 0;
+function thermo(kind, size = 36) {
+  const L = {
+    cold: { fill: 0.12, c1: "#bfe8ff", c2: "#6cc4f5", glass: "#e9f7ff" },
+    cool: { fill: 0.1, c1: "#ff7a5c", c2: "#d7261e", glass: "none", dot: true },
+    warm: { fill: 0.66, c1: "#ffc46b", c2: "#f08a24", glass: "#fff7ec" },
+    hot: { fill: 1, c1: "#ff7a5c", c2: "#d7261e", glass: "#fff1ee" },
+  }[kind];
+  const id = "th" + ++thermoSeq, h = 64 * L.fill, y = 74 - h;
+  const ticks = [22, 34, 46, 58, 70].map((t) => `<line x1="40" y1="${t}" x2="${t === 46 ? 47 : 44}" y2="${t}" stroke="#9aa5a0" stroke-width="1.6" stroke-linecap="round"/>`).join("");
+  const extras = {
+    cold: `<g fill="#7fcff7" font-size="13" font-family="sans-serif"><text x="47" y="22">❄</text><text x="3" y="40">❄</text><text x="46" y="70" font-size="9">❄</text></g>
+      <path d="M18 96 q12 4 24 0" stroke="#bfe8ff" stroke-width="2.5" fill="none" stroke-linecap="round"/>`,
+    cool: "",
+    warm: `<g stroke="#f5a04a" stroke-width="2" fill="none" stroke-linecap="round"><path d="M50 30 q4 -4 0 -8 q-4 -4 0 -8"/><path d="M8 40 q4 -4 0 -8 q-4 -4 0 -8"/></g>`,
+    hot: `<g stroke="#ff5a3a" stroke-width="2.4" fill="none" stroke-linecap="round"><path d="M8 22 l-6 -6"/><path d="M4 34 l-4 0"/><path d="M48 10 l6 -6"/><path d="M52 24 l6 0"/></g>
+      <g fill="#ffb02e"><circle cx="40" cy="3" r="2.6"/><circle cx="20" cy="2" r="2"/><circle cx="50" cy="16" r="1.8"/></g>
+      <path d="M26 30 l4 5 -3 4 4 5" stroke="#fff" stroke-width="1.4" fill="none" opacity=".8"/>`,
+  }[kind];
+  const liquid = L.dot
+    ? `<circle cx="30" cy="82" r="6" fill="url(#${id})"/>`
+    : `<rect x="25.5" y="${y}" width="9" height="${h + 8}" rx="4.5" fill="url(#${id})"/><circle cx="30" cy="82" r="9" fill="url(#${id})"/>`;
+  return `<svg viewBox="0 0 60 100" width="${Math.round(size * 0.6)}" height="${size}" class="thermo thermo-${kind}" aria-hidden="true">
+    <defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0" stop-color="${L.c1}"/><stop offset="1" stop-color="${L.c2}"/></linearGradient></defs>
+    ${extras}
+    <path d="M21 72.6 V15 A9 9 0 0 1 39 15 V72.6 A13 13 0 1 1 21 72.6 Z" fill="${L.glass}" stroke="#7d8a83" stroke-width="2.4"/>
+    ${liquid}${ticks}
+  </svg>`;
 }
 
 // Gatilhos pessoais: alimentos que, nos últimos 60 dias, vêm antes de sintoma 1,5× mais que a média.
@@ -310,7 +342,7 @@ function legendHtml() {
     <p class="lg-how">Quanto o que você comeu tende a irritar o intestino. Cada alimento ganha uma cor; a nota do dia é a média, de 0 a 100. Quanto maior, mais tranquilo.</p>
     <ul>${Object.values(GUT).map((g) => row(g.emoji, `${g.label} (${g.pts} pts)`)).join("")}
       ${row("⚠️", "Seu gatilho (conta como 🔴)")}${row("❔", "Ainda sem nota")}</ul>
-    <p class="lg-sub">Nota do dia: ${GUT_LEVELS.map(([, e], i) => `${e} ${gr[i]}`).join(" · ")}</p>
+    <div class="lg-thermo">${GUT_LEVELS.map(([, k], i) => `<span>${thermo(k, 34)}<small>${gr[i]}</small></span>`).join("")}</div>
     <h3>Motivos de irritação</h3>
     <ul class="lg-why">${Object.values(WHY).map(([e, t]) => row(e, t)).join("")}</ul>
   </div>`;
@@ -778,7 +810,7 @@ function scoreTile(label, score, key) {
 
 function gutTile(score, key) {
   if (score == null) return `<div class="sc-tile"><span class="sc-emoji">🫥</span><span class="sc-num muted">--</span><span class="sc-label">Irritação</span><span class="sc-bar"><i style="width:0"></i></span></div>`;
-  const lv = gutLevel(score, key);
+  const lv = gutLevel(score, 29);
   return `<div class="sc-tile ${lv.tone}"><span class="sc-emoji">${lv.emoji}</span><span class="sc-num">${score}</span><span class="sc-label">Irritação</span><span class="sc-bar"><i style="width:${score}%"></i></span></div>`;
 }
 
@@ -882,7 +914,7 @@ function viewDay(date) {
           symptomsRated(day) ? "" : "informe a intensidade do sintoma",
           mealsWithFood(date) >= MIN_MEALS ? "" : `registre ${MIN_MEALS - mealsWithFood(date) === 1 ? "mais 1 refeição" : "pelo menos 2 refeições"}`,
         ].filter(Boolean).reduce((acc, x, i, arr) => acc + (i === 0 ? "" : i === arr.length - 1 ? " e " : ", ") + x, "")}.</p>`}
-    ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score).emoji}</span>
+    ${(() => { const g = gutDayScore(date); return g ? `<div class="card sc-day ${gutLevel(g.score).tone}"><span class="sc-emoji">${gutLevel(g.score, 44).emoji}</span>
       <span><b class="num">Irritação: ${g.score}</b><br><span class="small">🟢 ${g.counts.ok} · 🟡 ${g.counts.atencao} · 🔴 ${g.counts.gatilho}${g.mine.length ? ` · ⚠️ ${esc(g.mine.join(", "))}` : ""}</span></span></div>` : ""; })()}
     ${ds?.score != null ? `<div class="card sc-day ${level(ds.score).tone}"><span class="sc-emoji">${level(ds.score).emoji}</span>
       <span><b class="num">Nota do dia: ${ds.score}</b><br><span class="small">${esc(level(ds.score, date).msg)}<br>🥦 ${ds.counts.saudavel} · 🍞 ${ds.counts.moderado} · 🍟 ${ds.counts.evitar}</span></span></div>` : ""}

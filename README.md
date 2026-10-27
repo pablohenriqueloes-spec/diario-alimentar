@@ -34,3 +34,5 @@ Horário da refeição: o relógio começa no horário típico (`MEAL_TIMES` em 
 almoço 13h, lanche 17h, jantar 19h, ceia 22h). Em Ajustes, "Utilizar sempre horário atual no relógio?"
 (`settings.nowTime`) troca isso pela hora atual nas refeições de hoje. Depois que o relógio é girado, trocar o
 nome da refeição não muda mais o horário.
+A nota de irritação do dia aparece como termômetro (`thermo()` em `public/app.js`): gelado (80+), transparente com
+um ponto vermelho (60 a 79), laranja (40 a 59) e fervendo, tremendo (abaixo de 40).
