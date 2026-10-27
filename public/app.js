@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027013512"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027015524"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -293,6 +293,34 @@ function gutDayScore(date) {
     counts[g]++; pts += GUT[g].pts; n++;
   }
   return n ? { score: Math.round(pts / n), counts, mine: [...mine] } : null;
+}
+
+/* ---------- Legenda dos emojis (botão "?" flutuante) ---------- */
+
+// Abre só enquanto o dedo está no "?"; soltar fecha.
+function legendHtml() {
+  const row = (e, t) => `<li><span class="lg-e">${e}</span>${esc(t)}</li>`;
+  const ranges = (levels) => levels.map(([min], i) => (i === 0 ? `${min} ou mais` : `${min} a ${levels[i - 1][0] - 1}`));
+  const hr = ranges(LEVELS), gr = ranges(GUT_LEVELS);
+  return `<div class="lg-card">
+    <h3>Nota de saúde</h3>
+    <ul>${Object.values(HEALTH).map((h) => row(h.emoji, `${h.label} (${h.pts} pts)`)).join("")}</ul>
+    <p class="lg-sub">Nota do dia: ${LEVELS.map(([, e], i) => `${e} ${hr[i]}`).join(" · ")}</p>
+    <h3>Nota de barriga</h3>
+    <ul>${Object.values(GUT).map((g) => row(g.emoji, `${g.label} (${g.pts} pts)`)).join("")}
+      ${row("⚠️", "Gatilho seu, pelos seus registros (conta como 🔴)")}${row("❔", "Ainda sem nota")}</ul>
+    <p class="lg-sub">Nota do dia: ${GUT_LEVELS.map(([, e], i) => `${e} ${gr[i]}`).join(" · ")}</p>
+    <h3>Motivos da barriga</h3>
+    <ul class="lg-why">${Object.values(WHY).map(([e, t]) => row(e, t)).join("")}</ul>
+  </div>`;
+}
+function initLegend() {
+  const btn = document.getElementById("legend-btn"), pop = document.getElementById("legend-pop");
+  const show = (e) => { e.preventDefault(); pop.innerHTML = legendHtml(); pop.hidden = false; btn.classList.add("on"); };
+  const hide = () => { pop.hidden = true; btn.classList.remove("on"); };
+  btn.addEventListener("pointerdown", show);
+  for (const ev of ["pointerup", "pointercancel", "blur"]) window.addEventListener(ev, hide);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
 /* ---------- Personagem do dia (Friends) ---------- */
@@ -2212,6 +2240,7 @@ async function exportData() {
 let lastHash = null;
 function render() {
   closeSheet();
+  document.getElementById("legend-btn").hidden = !password;
   if (!password) return viewLogin();
   const [, route, arg] = (location.hash.replace(/^#/, "") || "/").split("/");
   const sameScreen = location.hash === lastHash, y = window.scrollY;
@@ -2282,6 +2311,7 @@ async function forceUpdate() {
 }
 
 if (password) setSync("Salvo no aparelho");
+initLegend();
 render();
 sync();
 checkUpdate();

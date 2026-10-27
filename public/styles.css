@@ -466,3 +466,23 @@ details.rank-row[open] summary .rank-name::after { transform: rotate(90deg); }
 .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .switch input:checked + span { background: var(--accent, #34c759); }
 .switch input:checked + span::after { transform: translateX(18px); }
+
+/* Botão "?" flutuante: segurar mostra a legenda dos emojis */
+.legend-btn {
+  position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(68px + env(safe-area-inset-bottom, 0px)); z-index: 15;
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); padding: 0;
+  background: var(--surface); color: var(--muted); font: 700 15px/1 var(--font); opacity: .85;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18); cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none;
+}
+.legend-btn[hidden] { display: none; }
+.legend-btn.on { background: var(--accent); color: var(--surface); opacity: 1; }
+.legend-pop { position: fixed; inset: 0; z-index: 14; background: rgba(0,0,0,.45); display: grid; place-items: center; padding: 16px; pointer-events: none; }
+.legend-pop[hidden] { display: none; }
+.lg-card { width: 100%; max-width: 380px; max-height: 80vh; overflow: hidden; background: var(--surface); color: var(--fg); border-radius: 18px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.lg-card h3 { margin: 8px 0 4px; font-size: 15px; }
+.lg-card h3:first-child { margin-top: 0; }
+.lg-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 14px; }
+.lg-card ul.lg-why { grid-template-columns: 1fr 1fr; font-size: 13px; }
+.lg-e { display: inline-block; width: 26px; }
+.lg-sub { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
