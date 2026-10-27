@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261026215626"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027012914"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -925,7 +925,7 @@ function viewDay(date) {
       dd.symptoms = dd.symptoms.filter((x) => x.id !== el.dataset.id);
       saveDay(dd); render();
     } else if (el.dataset.action === "add-meal") {
-      const time = date === today() ? nowHHMM() : "";
+      const time = date === today() ? nowHHMM() : "12:00";
       const id = "meal:" + uid();
       saveMeal({ id, date, time, name: guessMealName(time || "12:00"), autoName: true, items: [] });
       location.hash = "#/refeicao/" + id;
@@ -934,8 +934,10 @@ function viewDay(date) {
 }
 
 function viewMeal(id) {
-  const meal = get(id);
+  let meal = get(id);
   if (!meal) { location.hash = "#/"; return; }
+  // O horário fica sempre à mostra no carrossel: refeição sem horário ganha um padrão para ajustar.
+  if (!meal.time) { saveMeal({ ...meal, time: meal.date === today() ? nowHHMM() : "12:00" }); meal = get(id); }
   setChrome({ title: meal.name || "Refeição", back: "#/dia/" + meal.date, tab: "cal" });
 
   const items = (meal.items || []).map((it, i) => {
@@ -952,8 +954,7 @@ function viewMeal(id) {
       <label class="field">Refeição<input type="text" id="meal-name" value="${esc(meal.name)}"></label>
       <div class="chips" id="meal-chips">${MEAL_NAMES.map((n) => `<button class="chip ${n === meal.name ? "on" : ""}" data-action="name" data-value="${esc(n)}">${esc(n)}</button>`).join("")}</div>
       <span class="muted small">Horário em que aconteceu</span>
-      ${meal.time ? timeWheel("meal", meal.time) : `<button class="btn" data-action="set-time">Informar horário</button>
-        <p class="notice">Informe o horário para a refeição entrar na análise.</p>`}
+      ${timeWheel("meal", meal.time)}
     </div>
     <div class="card">
       <h2>Alimentos</h2>
@@ -1026,10 +1027,6 @@ function viewMeal(id) {
     const m = reload();
     switch (el.dataset.action) {
       case "name": m.name = el.dataset.value; m.autoName = false; saveMeal(m); render(); break;
-      case "set-time":
-        m.time = m.date === today() ? nowHHMM() : "12:00";
-        if (m.autoName) m.name = guessMealName(m.time);
-        saveMeal(m); render(); break;
       case "del-item": m.items.splice(Number(el.dataset.i), 1); saveMeal(m); render(); break;
       case "add-food": openFoodSheet((foodId, qty) => {
         const mm = reload(); mm.items.push({ foodId, qty }); saveMeal(mm); render(); toast(gutWarning(foodId) || "Alimento salvo");
