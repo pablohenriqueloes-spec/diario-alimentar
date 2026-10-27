@@ -29,3 +29,8 @@ Gatilhos pessoais são calculados no aparelho a partir da análise dos últimos 
 
 Personagem do dia (Friends): ao responder as 4 perguntas de "Como foi o dia", uma nota parcial (40% respostas,
 60% comida do dia) escolhe o personagem, mostrado num modal por 15 s. As fotos ficam em `public/friends/`.
+
+Horário da refeição: o relógio começa no horário típico (`MEAL_TIMES` em `public/app.js`: café 8h, lanche 10h,
+almoço 13h, lanche 17h, jantar 19h, ceia 22h). Em Ajustes, "Utilizar sempre horário atual no relógio?"
+(`settings.nowTime`) troca isso pela hora atual nas refeições de hoje. Depois que o relógio é girado, trocar o
+nome da refeição não muda mais o horário.

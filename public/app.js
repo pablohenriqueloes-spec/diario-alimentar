@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027012914"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261027013512"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -152,6 +152,18 @@ const MEAL_NAMES = ["Café da manhã", "Lanche da manhã", "Almoço", "Lanche da
 const SYMPTOM_TYPES = ["Dor abdominal", "Inchaço", "Gases", "Azia", "Náusea", "Diarreia", "Prisão de ventre", "Outro"];
 const INTENSITIES = [["leve", "Leve"], ["moderado", "Moderado"], ["forte", "Forte"]];
 const FOOD_GROUPS = ["Fritura", "Gordura", "Fibra", "FODMAP", "Lactose", "Glúten", "Açúcar", "Cafeína", "Álcool", "Picante", "Leguminosa", "Ultraprocessado"];
+
+// Horário que o relógio mostra primeiro para cada refeição (continua editável).
+const MEAL_TIMES = { "Café da manhã": "08:00", "Lanche da manhã": "10:00", "Almoço": "13:00", "Lanche da tarde": "17:00", "Jantar": "19:00", "Ceia": "22:00" };
+// Ajuste "usar sempre o horário atual": vale só para refeições de hoje, já que em outro dia a hora atual não faz sentido.
+const useNowFor = (date) => !!settings().nowTime && date === today();
+const defaultMealTime = (name, date) => (useNowFor(date) ? nowHHMM() : MEAL_TIMES[name] || "12:00");
+// Nova refeição: hoje, a do horário atual; em outro dia, a primeira que ainda falta.
+function newMealName(date) {
+  if (date === today()) return guessMealName(nowHHMM());
+  const used = new Set(all("meal").filter((m) => m.date === date).map((m) => m.name));
+  return MEAL_NAMES.find((n) => !used.has(n)) || "Lanche da tarde";
+}
 
 function guessMealName(time) {
   const h = Number((time || "12:00").slice(0, 2));
@@ -925,9 +937,9 @@ function viewDay(date) {
       dd.symptoms = dd.symptoms.filter((x) => x.id !== el.dataset.id);
       saveDay(dd); render();
     } else if (el.dataset.action === "add-meal") {
-      const time = date === today() ? nowHHMM() : "12:00";
+      const name = newMealName(date);
       const id = "meal:" + uid();
-      saveMeal({ id, date, time, name: guessMealName(time || "12:00"), autoName: true, items: [] });
+      saveMeal({ id, date, time: defaultMealTime(name, date), name, autoName: true, items: [] });
       location.hash = "#/refeicao/" + id;
     }
   };
@@ -937,7 +949,7 @@ function viewMeal(id) {
   let meal = get(id);
   if (!meal) { location.hash = "#/"; return; }
   // O horário fica sempre à mostra no carrossel: refeição sem horário ganha um padrão para ajustar.
-  if (!meal.time) { saveMeal({ ...meal, time: meal.date === today() ? nowHHMM() : "12:00" }); meal = get(id); }
+  if (!meal.time) { saveMeal({ ...meal, time: defaultMealTime(meal.name, meal.date) }); meal = get(id); }
   setChrome({ title: meal.name || "Refeição", back: "#/dia/" + meal.date, tab: "cal" });
 
   const items = (meal.items || []).map((it, i) => {
@@ -986,6 +998,7 @@ function viewMeal(id) {
   initWheels($view, (key, time) => {
     const m = reload();
     m.time = time;
+    m.timeManual = true; // escolhido no relógio: trocar o nome da refeição não mexe mais no horário
     if (m.autoName) { // nome sugerido acompanha o horário até ser escolhido
       m.name = guessMealName(time);
       document.getElementById("meal-name").value = m.name;
@@ -1026,7 +1039,10 @@ function viewMeal(id) {
     if (!el) return;
     const m = reload();
     switch (el.dataset.action) {
-      case "name": m.name = el.dataset.value; m.autoName = false; saveMeal(m); render(); break;
+      case "name":
+        m.name = el.dataset.value; m.autoName = false;
+        if (!m.timeManual) m.time = defaultMealTime(m.name, m.date);
+        saveMeal(m); render(); break;
       case "del-item": m.items.splice(Number(el.dataset.i), 1); saveMeal(m); render(); break;
       case "add-food": openFoodSheet((foodId, qty) => {
         const mm = reload(); mm.items.push({ foodId, qty }); saveMeal(mm); render(); toast(gutWarning(foodId) || "Alimento salvo");
@@ -2092,6 +2108,17 @@ function viewSettings() {
   $view.innerHTML = `
     ${notifCard()}
     <div class="card">
+      <h2>Relógio das refeições</h2>
+      <div class="set-row">
+        <span>Utilizar sempre horário atual no relógio?
+          <button class="tip-btn" data-action="tip" aria-label="O que é isso?" aria-expanded="false">i</button></span>
+        <label class="switch"><input type="checkbox" id="st-now" ${st.nowTime ? "checked" : ""}><span></span></label>
+      </div>
+      <div class="tip" id="tip-now" hidden>Ligado: ao abrir uma refeição de hoje, o relógio já mostra a hora em que você está registrando.
+        Desligado: o relógio começa no horário típico da refeição (café 8h, lanche da manhã 10h, almoço 13h, lanche da tarde 17h, jantar 19h, ceia 22h).
+        Nos dois casos dá para girar e ajustar. Em dias anteriores vale sempre o horário típico.</div>
+    </div>
+    <div class="card">
       <h2>Janela da análise</h2>
       <span class="muted small">Um alimento conta como suspeito quando foi comido dentro deste intervalo antes do sintoma.</span>
       <div class="row">
@@ -2122,11 +2149,16 @@ function viewSettings() {
 
   $view.oninput = null;
   $view.onchange = (e) => {
+    if (e.target.id === "st-now") {
+      put("settings", "settings", { ...settings(), nowTime: e.target.checked });
+      toast(e.target.checked ? "O relógio vai começar na hora atual" : "O relógio vai começar no horário da refeição");
+      return;
+    }
     if (e.target.id === "st-min" || e.target.id === "st-max") {
       const winMin = Math.round(parseNum(document.getElementById("st-min").value));
       const winMax = parseNum(document.getElementById("st-max").value);
       if (!winMax || winMin / 60 >= winMax) { toast("O fim da janela precisa ser maior que o começo"); render(); return; }
-      put("settings", "settings", { winMin, winMax });
+      put("settings", "settings", { ...settings(), winMin, winMax });
       toast("Janela salva");
     }
   };
@@ -2139,6 +2171,11 @@ function viewSettings() {
     const el = e.target.closest("[data-action]");
     if (!el) return;
     if (await notifClick(el)) return;
+    if (el.dataset.action === "tip") {
+      const tip = document.getElementById("tip-now");
+      tip.hidden = !tip.hidden; el.setAttribute("aria-expanded", String(!tip.hidden));
+      return;
+    }
     if (el.dataset.action === "sync") { await sync(); render(); }
     if (el.dataset.action === "export") exportData();
     if (el.dataset.action === "update") { el.textContent = "Atualizando…"; forceUpdate(); }
