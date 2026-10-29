@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "20261027023643"; // trocado pelo deploy.sh a cada publicação
+const APP_VERSION = "20261029004549"; // trocado pelo deploy.sh a cada publicação
 
 /* ---------- Armazenamento local ---------- */
 
@@ -676,6 +676,9 @@ function timeWheel(key, time) {
 }
 
 // Liga os carrosséis dentro de `root`; onChange(key, "HH:MM") quando um giro termina.
+// Só vale giro feito pelo dedo: o iPhone às vezes zera a rolagem sozinho (app voltando do segundo plano,
+// teclado abrindo), e isso gravava 00:00. Rolagem sem toque recente é desfeita, não salva.
+const WHEEL_TOUCH_MS = 1500, WHEEL_MOMENTUM_MS = 400;
 function initWheels(root, onChange) {
   for (const tw of root.querySelectorAll(".tw")) {
     const cols = [...tw.querySelectorAll(".tw-col")];
@@ -685,9 +688,17 @@ function initWheels(root, onChange) {
       const max = col.querySelectorAll(".tw-row").length - 1;
       col.scrollTop = Number(col.dataset.value) * WHEEL_ROW;
       mark(col, Number(col.dataset.value));
-      let t = null;
+      let t = null, touched = 0, moving = 0;
+      const touch = () => { touched = Date.now(); };
+      for (const ev of ["pointerdown", "touchstart", "touchmove", "touchend", "wheel", "keydown"]) col.addEventListener(ev, touch, { passive: true });
       col.addEventListener("scroll", () => {
-        wheelBusy = Date.now();
+        const now = Date.now();
+        if (now - touched > WHEEL_TOUCH_MS && now - moving > WHEEL_MOMENTUM_MS) {
+          clearTimeout(t);
+          t = setTimeout(() => restoreWheel(col), 150);
+          return;
+        }
+        moving = wheelBusy = now;
         const i = Math.max(0, Math.min(max, Math.round(col.scrollTop / WHEEL_ROW)));
         mark(col, i);
         clearTimeout(t);
@@ -699,11 +710,22 @@ function initWheels(root, onChange) {
       }, { passive: true });
       col.addEventListener("click", (e) => {
         const row = e.target.closest(".tw-row");
-        if (row) col.scrollTo({ top: Number(row.dataset.i) * WHEEL_ROW, behavior: "smooth" });
+        if (row) { touch(); col.scrollTo({ top: Number(row.dataset.i) * WHEEL_ROW, behavior: "smooth" }); }
       });
     }
   }
 }
+// Põe o carrossel de volta no valor guardado (sem gravar nada).
+function restoreWheel(col) {
+  if (!col.isConnected || !col.clientHeight) return;
+  const v = Number(col.dataset.value);
+  if (Math.round(col.scrollTop / WHEEL_ROW) !== v) col.scrollTop = v * WHEEL_ROW;
+  col.querySelectorAll(".tw-row").forEach((r) => r.classList.toggle("on", Number(r.dataset.i) === v));
+}
+const restoreWheels = () => document.querySelectorAll(".tw-col").forEach(restoreWheel);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") requestAnimationFrame(restoreWheels); });
+window.addEventListener("pageshow", () => requestAnimationFrame(restoreWheels));
+window.visualViewport?.addEventListener("resize", () => requestAnimationFrame(restoreWheels));
 
 /* ---------- Telas ---------- */
 
